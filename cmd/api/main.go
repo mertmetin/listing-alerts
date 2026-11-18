@@ -57,7 +57,12 @@ func run() error {
 	deps.RegisterChecks(checks)
 	reg := platform.NewRegistry(cfg)
 	mux := platform.OpsMux(checks, reg)
-	api.New(search.Store{Pool: deps.PG}, log, reg).Routes(mux)
+	srvAPI := api.New(search.Store{Pool: deps.PG}, log, reg)
+	srvAPI.UnsubSecret = []byte(os.Getenv("UNSUBSCRIBE_SECRET"))
+	if len(srvAPI.UnsubSecret) == 0 {
+		log.Warn("UNSUBSCRIBE_SECRET not set: /v1/unsubscribe disabled")
+	}
+	srvAPI.Routes(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

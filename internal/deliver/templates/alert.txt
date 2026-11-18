@@ -1,0 +1,17 @@
+{{.Site.Name}}
+
+{{.Intro}}
+{{range .Cards}}
+{{.Headline}}: {{.Title}}
+{{if .Price}}{{.Price}}
+{{end}}{{if .Detail}}{{.Detail}}
+{{end}}{{if .SignIn}}Sign in to see the sold price: {{.SignIn}}
+{{end}}{{if .Facts}}{{.Facts}}
+{{end}}{{.URL}}
+{{if .Brokerage}}Listing brokerage: {{.Brokerage}}
+{{end}}Matches "{{.SearchName}}". Stop this search: {{.Unsub}}
+{{end}}
+Manage your saved searches: {{.Manage}}
+Unsubscribe from all alerts: {{.UnsubAll}}
+
+You are getting this because you saved a search on {{.Site.BaseURL}}. MLS® listing data provided by PropTx. Information is deemed reliable but is not guaranteed.

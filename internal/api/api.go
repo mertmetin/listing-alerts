@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -26,6 +28,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/mertmetin/listing-alerts/internal/search"
+	"github.com/mertmetin/listing-alerts/internal/unsub"
 )
 
 // Store is what the API needs from search.Store.
@@ -33,6 +36,7 @@ type Store interface {
 	Create(ctx context.Context, s *search.Search) error
 	Update(ctx context.Context, s *search.Search) error
 	Delete(ctx context.Context, site, id string) error
+	DeleteUser(ctx context.Context, site, user string) (int, error)
 	Get(ctx context.Context, site, id string) (*search.Search, error)
 	List(ctx context.Context, site, user string) ([]*search.Search, error)
 	SiteForKey(ctx context.Context, key string) (string, error)
@@ -40,9 +44,12 @@ type Store interface {
 
 // Server serves the API.
 type Server struct {
-	Store    Store
-	Log      *slog.Logger
-	requests *prometheus.CounterVec
+	Store Store
+	// UnsubSecret signs unsubscribe links in emails (shared with delivery).
+	// Empty disables /v1/unsubscribe.
+	UnsubSecret []byte
+	Log         *slog.Logger
+	requests    *prometheus.CounterVec
 
 	mu   sync.Mutex
 	keys map[string]keyEntry // key -> site, cached briefly
@@ -69,6 +76,72 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /v1/searches/{id}", s.auth("get", s.get))
 	mux.Handle("PUT /v1/searches/{id}", s.auth("update", s.update))
 	mux.Handle("DELETE /v1/searches/{id}", s.auth("delete", s.remove))
+	if len(s.UnsubSecret) > 0 {
+		mux.HandleFunc("GET /v1/unsubscribe", s.unsubscribePage)
+		mux.HandleFunc("POST /v1/unsubscribe", s.unsubscribe)
+	}
+}
+
+// unsubscribePage asks for confirmation. A GET must not unsubscribe: mail
+// scanners and link previews open every URL in a message.
+func (s *Server) unsubscribePage(w http.ResponseWriter, r *http.Request) {
+	tok := r.URL.Query().Get("t")
+	t, err := unsub.Verify(s.UnsubSecret, tok)
+	if err != nil {
+		page(w, http.StatusBadRequest, "This unsubscribe link is not valid.", "")
+		return
+	}
+	what := "this saved search"
+	if t.Scope == unsub.User {
+		what = "all your saved-search alerts"
+	}
+	page(w, http.StatusOK, "Stop emails for "+what+"?",
+		`<form method="post"><input type="hidden" name="t" value="`+html.EscapeString(tok)+`"><button type="submit">Unsubscribe</button></form>`)
+}
+
+// unsubscribe does it: the confirm button, or a mail client's RFC 8058
+// one-click POST (body "List-Unsubscribe=One-Click", token in the URL).
+func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	tok := r.URL.Query().Get("t")
+	if tok == "" {
+		_ = r.ParseForm()
+		tok = r.PostForm.Get("t")
+	}
+	t, err := unsub.Verify(s.UnsubSecret, tok)
+	if err != nil {
+		s.requests.WithLabelValues("unsubscribe", http.StatusText(http.StatusBadRequest)).Inc()
+		page(w, http.StatusBadRequest, "This unsubscribe link is not valid.", "")
+		return
+	}
+	switch t.Scope {
+	case unsub.Search:
+		err = s.Store.Delete(r.Context(), t.Site, t.ID)
+		if errors.Is(err, search.ErrNotFound) {
+			err = nil // already gone: unsubscribing twice is fine
+		}
+	case unsub.User:
+		_, err = s.Store.DeleteUser(r.Context(), t.Site, t.ID)
+	}
+	if err != nil {
+		s.Log.Error("unsubscribe", "err", err)
+		s.requests.WithLabelValues("unsubscribe", http.StatusText(http.StatusInternalServerError)).Inc()
+		page(w, http.StatusInternalServerError, "Something went wrong. Please try the link again in a minute.", "")
+		return
+	}
+	s.requests.WithLabelValues("unsubscribe", http.StatusText(http.StatusOK)).Inc()
+	s.Log.Info("unsubscribed", "scope", t.Scope, "site", t.Site)
+	page(w, http.StatusOK, "You are unsubscribed.", "<p>You will not get these alerts any more.</p>")
+}
+
+func page(w http.ResponseWriter, code int, title, body string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(code)
+	fmt.Fprintf(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Alerts</title>
+<style>body{font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px;color:#1d1d1b;background:#f4f2ee}
+button{font:inherit;font-weight:600;padding:.6rem 1.2rem;border:0;border-radius:8px;background:#1d1d1b;color:#fff;cursor:pointer}</style></head>
+<body><h1 style="font-size:1.4rem">%s</h1>%s</body></html>`, html.EscapeString(title), body)
 }
 
 type handler func(w http.ResponseWriter, r *http.Request, site string) (int, any)
@@ -165,6 +238,9 @@ func (s *Server) list(_ http.ResponseWriter, r *http.Request, site string) (int,
 	if err != nil {
 		s.Log.Error("list searches", "err", err)
 		return http.StatusInternalServerError, errBody("internal error")
+	}
+	if out == nil {
+		out = []*search.Search{} // always a JSON array, never null
 	}
 	return http.StatusOK, map[string]any{"searches": out}
 }

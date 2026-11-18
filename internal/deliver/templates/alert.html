@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"></head>
+<body style="margin:0;padding:0;background:#f4f2ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1d1d1b;">
+<div style="max-width:560px;margin:0 auto;padding:24px 16px;">
+  <p style="margin:0 0 4px;font-size:13px;color:#6b6860;letter-spacing:.02em;">{{.Site.Name}}</p>
+  <p style="margin:0 0 20px;font-size:15px;line-height:1.5;">{{.Intro}}</p>
+  {{range .Cards}}
+  <div style="background:#ffffff;border:1px solid #e4e0d8;border-radius:12px;padding:18px 18px 14px;margin:0 0 14px;">
+    <p style="margin:0 0 6px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#b5523b;">{{.Headline}}</p>
+    <p style="margin:0 0 4px;font-size:18px;font-weight:600;line-height:1.3;"><a href="{{.URL}}" style="color:#1d1d1b;text-decoration:none;">{{.Title}}</a></p>
+    {{if .Price}}<p style="margin:0 0 6px;font-size:20px;font-weight:700;">{{.Price}}</p>{{end}}
+    {{if .Detail}}<p style="margin:0 0 6px;font-size:14px;color:#3d3b36;">{{.Detail}}</p>{{end}}
+    {{if .SignIn}}<p style="margin:0 0 6px;font-size:14px;"><a href="{{.SignIn}}" style="color:#b5523b;">Sign in to see the sold price</a></p>{{end}}
+    {{if .Facts}}<p style="margin:0 0 10px;font-size:14px;color:#6b6860;">{{.Facts}}</p>{{end}}
+    <p style="margin:0 0 12px;"><a href="{{.URL}}" style="display:inline-block;background:#1d1d1b;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:9px 16px;border-radius:8px;">View the listing</a></p>
+    {{if .Brokerage}}<p style="margin:0 0 4px;font-size:12px;color:#6b6860;">Listing brokerage: {{.Brokerage}}</p>{{end}}
+    <p style="margin:0;font-size:12px;color:#8a867c;">Matches “{{.SearchName}}” · <a href="{{.Unsub}}" style="color:#8a867c;">stop this search</a></p>
+  </div>
+  {{end}}
+  <p style="margin:18px 0 6px;font-size:13px;"><a href="{{.Manage}}" style="color:#1d1d1b;">Manage your saved searches</a> · <a href="{{.UnsubAll}}" style="color:#1d1d1b;">unsubscribe from all alerts</a></p>
+  <p style="margin:0;font-size:11px;line-height:1.5;color:#8a867c;">You are getting this because you saved a search on {{.Site.BaseURL}}. MLS® listing data provided by PropTx. Information is deemed reliable but is not guaranteed. The trademarks MLS®, Multiple Listing Service® and REALTOR® are owned or controlled by The Canadian Real Estate Association.</p>
+</div>
+</body>
+</html>

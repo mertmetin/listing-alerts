@@ -41,6 +41,11 @@ scrape_configs:
       - source_labels: [__meta_dns_name]
         target_label: service
 
+  - job_name: delivery
+    static_configs:
+      - targets: ["delivery:8080"]
+        labels: { service: delivery }
+
   - job_name: redpanda
     metrics_path: /public_metrics
     static_configs:

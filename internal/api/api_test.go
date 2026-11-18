@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/mertmetin/listing-alerts/internal/search"
+	"github.com/mertmetin/listing-alerts/internal/unsub"
 )
 
 type memStore struct {
@@ -63,6 +65,19 @@ func (m *memStore) Delete(_ context.Context, site, id string) error {
 	return nil
 }
 
+func (m *memStore) DeleteUser(_ context.Context, site, user string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, r := range m.rows {
+		if r.Site == site && r.UserID == user {
+			delete(m.rows, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (m *memStore) Get(_ context.Context, site, id string) (*search.Search, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -89,6 +104,7 @@ func (m *memStore) SiteForKey(_ context.Context, key string) (string, error) { r
 func newServer(t *testing.T) *httptest.Server {
 	st := &memStore{rows: map[string]*search.Search{}, keys: map[string]string{"k-mm": "mertmetin", "k-hr": "hotrentals"}}
 	s := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), prometheus.NewRegistry())
+	s.UnsubSecret = []byte("test-secret")
 	mux := http.NewServeMux()
 	s.Routes(mux)
 	srv := httptest.NewServer(mux)
@@ -189,5 +205,47 @@ func TestPerUserLimit(t *testing.T) {
 	}
 	if code, _ := call(t, srv, "POST", "/v1/searches", "k-mm", ottawa); code != 409 {
 		t.Fatalf("over the limit: %d", code)
+	}
+}
+
+func TestUnsubscribe(t *testing.T) {
+	srv := newServer(t)
+	_, out := call(t, srv, "POST", "/v1/searches", "k-mm", ottawa)
+	id := out["id"].(string)
+	_, _ = call(t, srv, "POST", "/v1/searches", "k-mm", ottawa)
+	secret := []byte("test-secret")
+	one := unsub.Sign(secret, unsub.Target{Scope: unsub.Search, Site: "mertmetin", ID: id})
+
+	// A GET (mail scanner, link preview) only shows the confirmation page.
+	resp, _ := http.Get(srv.URL + "/v1/unsubscribe?t=" + url.QueryEscape(one))
+	resp.Body.Close()
+	if _, l := call(t, srv, "GET", "/v1/searches?user_id=u1", "k-mm", ""); resp.StatusCode != 200 || len(l["searches"].([]any)) != 2 {
+		t.Fatalf("GET unsubscribed something (status %d)", resp.StatusCode)
+	}
+	// RFC 8058 one-click POST.
+	resp, _ = http.Post(srv.URL+"/v1/unsubscribe?t="+url.QueryEscape(one), "application/x-www-form-urlencoded", strings.NewReader("List-Unsubscribe=One-Click"))
+	resp.Body.Close()
+	if _, l := call(t, srv, "GET", "/v1/searches?user_id=u1", "k-mm", ""); resp.StatusCode != 200 || len(l["searches"].([]any)) != 1 {
+		t.Fatalf("one-click: status %d, %v left", resp.StatusCode, l)
+	}
+	// Twice is fine.
+	resp, _ = http.Post(srv.URL+"/v1/unsubscribe?t="+url.QueryEscape(one), "application/x-www-form-urlencoded", nil)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("second unsubscribe: %d", resp.StatusCode)
+	}
+	// All of a user's searches, via the confirm form.
+	all := unsub.Sign(secret, unsub.Target{Scope: unsub.User, Site: "mertmetin", ID: "u1"})
+	resp, _ = http.PostForm(srv.URL+"/v1/unsubscribe", url.Values{"t": {all}})
+	resp.Body.Close()
+	if _, l := call(t, srv, "GET", "/v1/searches?user_id=u1", "k-mm", ""); len(l["searches"].([]any)) != 0 {
+		t.Fatalf("user unsubscribe left %v", l)
+	}
+	// Forged or foreign-secret tokens do nothing.
+	bad := unsub.Sign([]byte("other"), unsub.Target{Scope: unsub.User, Site: "hotrentals", ID: "x"})
+	resp, _ = http.PostForm(srv.URL+"/v1/unsubscribe", url.Values{"t": {bad}})
+	resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("forged token: %d", resp.StatusCode)
 	}
 }

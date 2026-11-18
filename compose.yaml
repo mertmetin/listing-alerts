@@ -98,6 +98,9 @@ services:
   # reaches a real inbox (or Gmail's sending limits). UI on :8025.
   mailpit:
     image: axllent/mailpit:v1.33.1
+    environment:
+      # Lets tests make the SMTP server fail on purpose (PUT /api/v1/chaos).
+      MP_ENABLE_CHAOS: "true"
     ports:
       - "8025:8025"
       - "1025:1025"
@@ -109,6 +112,7 @@ services:
         SERVICE: api
     environment:
       <<: *service-env
+      UNSUBSCRIBE_SECRET: ${UNSUBSCRIBE_SECRET:?run make env}
     ports:
       - "8081:8080"
     depends_on:
@@ -168,6 +172,32 @@ services:
       <<: *service-env
       SHARD_INDEX: "2"
       SHARD_COUNT: "3"
+
+  # Sends alerts. Development: everything goes to Mailpit (http://localhost:8025).
+  # Production: SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER + SMTP_PASSWORD
+  # (a Google app password) in .env.
+  delivery:
+    build:
+      context: .
+      args:
+        SERVICE: delivery
+    environment:
+      <<: *service-env
+      UNSUBSCRIBE_SECRET: ${UNSUBSCRIBE_SECRET:?run make env}
+      UNSUBSCRIBE_URL: ${UNSUBSCRIBE_URL:-http://localhost:8081/v1/unsubscribe}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Mert Metin <alerts@mertmetin.ca>}
+      RATE_BURST: ${RATE_BURST:-5}
+      RATE_EVERY: ${RATE_EVERY:-10m}
+      DAILY_LIMIT: ${DAILY_LIMIT:-1500}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
+    restart: unless-stopped
 
   # Pollers need PropTx tokens, so they only start with `make live`
   # (profile "live"). One replica per source: each cursor has one writer.

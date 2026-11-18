@@ -84,6 +84,15 @@ func (st Store) Delete(ctx context.Context, site, id string) error {
 	return nil
 }
 
+// DeleteUser soft-deletes every search of a user on a site and returns how many.
+func (st Store) DeleteUser(ctx context.Context, site, user string) (int, error) {
+	tag, err := st.Pool.Exec(ctx, `UPDATE saved_searches SET deleted = true, updated_at = now() WHERE site = $1 AND user_id = $2 AND NOT deleted`, site, user)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // Get returns one live search of site.
 func (st Store) Get(ctx context.Context, site, id string) (*Search, error) {
 	var spec []byte

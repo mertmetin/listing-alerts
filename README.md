@@ -7,13 +7,12 @@ price drops, sold or leased (with the price where the data allows it) and back o
 It is built for two production sites, [mertmetin.ca](https://mertmetin.ca) (homes for sale) and
 [hotrentals.ca](https://hotrentals.ca) (Ontario rentals), and load-tested at Canada-wide volume.
 
-> **Status: milestone 3 of 6.** Live on the PropTx VOW and IDX feeds (about 89K and 81K residential listings)
-> and hotrentals.ca's off-MLS rentals. Pollers publish idempotent change events; stateless detectors turn
-> them into new listing, price drop, sold, leased and back-on-market events and geocode them from municipal
-> address points; sharded matchers check each one against every saved search (p50 0.4 ms against 1M) and
-> publish alerts. Email delivery comes next. Design notes: [ingestion](docs/design/ingestion.md),
-> [change detection](docs/design/detection.md), [matching](docs/design/matching.md); plan:
-> [docs/PLAN.md](docs/PLAN.md).
+> **Status: milestone 4 of 6.** Live on the PropTx VOW and IDX feeds (about 89K and 81K residential listings)
+> and hotrentals.ca's off-MLS rentals: pollers → change detection with geocoding → sharded matching against
+> saved searches (p50 0.4 ms against 1M) → email delivery with digests, per-user rate limits, retries, a
+> dead-letter topic and one-click unsubscribe. In development all email goes to Mailpit. Scale and chaos
+> tests come next. Design notes: [ingestion](docs/design/ingestion.md), [change detection](docs/design/detection.md),
+> [matching](docs/design/matching.md), [delivery](docs/design/delivery.md); plan: [docs/PLAN.md](docs/PLAN.md).
 
 ## Architecture (target)
 
@@ -51,10 +50,10 @@ make down    # stop (make clean also deletes the data)
 | Service | URL |
 | --- | --- |
 | API readiness | http://localhost:8081/readyz |
-| Grafana | http://localhost:3300 (user `admin`, password in `.env`): *Platform*, *Ingestion*, *Change detection* and *Matching* dashboards |
+| Grafana | http://localhost:3300 (user `admin`, password in `.env`): *Platform*, *Ingestion*, *Change detection*, *Matching* and *Delivery* dashboards |
 | Prometheus | http://localhost:9091 |
 | Redpanda Console | http://localhost:8180 |
-| Mailpit (caught emails) | http://localhost:8025 |
+| Mailpit (every email in development) | http://localhost:8025 |
 
 Run `make hooks` once to block commits that contain secrets.
 

@@ -1,0 +1,52 @@
+{
+  "uid": "la-deliver",
+  "title": "Delivery",
+  "description": "Emails out, queue, retries, dead letters, rate limiting and end-to-end latency.",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["listing-alerts"],
+  "panels": [
+    {
+      "type": "stat", "title": "In range", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "textMode": "value_and_name", "colorMode": "none" },
+      "targets": [
+        { "refId": "A", "expr": "sum(increase(listing_alerts_deliver_messages_total[$__range]))", "legendFormat": "emails" },
+        { "refId": "B", "expr": "sum(increase(listing_alerts_deliver_alerts_delivered_total[$__range]))", "legendFormat": "alerts delivered" },
+        { "refId": "C", "expr": "sum(increase(listing_alerts_deliver_retries_total[$__range]))", "legendFormat": "retries" },
+        { "refId": "D", "expr": "sum(increase(listing_alerts_deliver_dead_lettered_total[$__range]))", "legendFormat": "dead-lettered" },
+        { "refId": "E", "expr": "sum(increase(listing_alerts_deliver_enqueued_total{result=\"duplicate\"}[$__range]))", "legendFormat": "duplicates dropped" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Emails / hour (single vs digest)", "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (kind) (rate(listing_alerts_deliver_messages_total[15m])) * 3600", "legendFormat": "{{kind}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Queue by status", "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "listing_alerts_deliver_queue", "legendFormat": "{{status}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Poller saw the change → email accepted (p50 / p99)", "gridPos": { "x": 0, "y": 12, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by (le) (rate(listing_alerts_deliver_pipeline_latency_seconds_bucket[30m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(listing_alerts_deliver_pipeline_latency_seconds_bucket[30m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Held back / failures per hour", "gridPos": { "x": 12, "y": 12, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (reason) (rate(listing_alerts_deliver_deferred_total[15m])) * 3600", "legendFormat": "deferred: {{reason}}" },
+        { "refId": "B", "expr": "sum(rate(listing_alerts_deliver_retries_total[15m])) * 3600", "legendFormat": "retries" },
+        { "refId": "C", "expr": "sum by (reason) (rate(listing_alerts_deliver_dead_lettered_total[15m])) * 3600", "legendFormat": "dead-lettered: {{reason}}" }
+      ]
+    }
+  ]
+}

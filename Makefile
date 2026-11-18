@@ -16,6 +16,7 @@ help: ## List targets
 .env:
 	@cp .env.example .env
 	@sed -i.bak -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$(openssl rand -hex 16)/" \
+	            -e "s/^UNSUBSCRIBE_SECRET=.*/UNSUBSCRIBE_SECRET=$$(openssl rand -hex 32)/" \
 	            -e "s/^GRAFANA_ADMIN_PASSWORD=.*/GRAFANA_ADMIN_PASSWORD=$$(openssl rand -hex 12)/" .env && rm -f .env.bak
 	@echo "Created .env with random local passwords (gitignored)."
 
@@ -75,7 +76,7 @@ test: ## Unit tests with the race detector
 itest: .env ## Integration tests against the running stack (make up first)
 	@set -a; . ./.env; set +a; \
 	POSTGRES_URL="postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@localhost:5433/$${POSTGRES_DB}?sslmode=disable" \
-	KAFKA_BROKERS=localhost:19092 \
+	KAFKA_BROKERS=localhost:19092 REDIS_ADDR=localhost:6380 \
 	go test -race -count=1 -tags integration ./...
 
 .PHONY: tokens
