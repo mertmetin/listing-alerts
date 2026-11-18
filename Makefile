@@ -82,6 +82,25 @@ itest: .env ## Integration tests against the running stack (make up first)
 tokens: .env ## Copy the PropTx tokens from the macOS Keychain into .env (never printed)
 	@./scripts/tokens.sh
 
+HOTRENTALS_DIR ?= $(HOME)/Projects/Personal/hotrentals
+
+.PHONY: geodata
+geodata: ## Copy hotrentals' Ontario address points (municipal open data) for geocoding
+	@mkdir -p data/geo
+	@test -f $(HOTRENTALS_DIR)/data/address-points.db || (echo "no address points in $(HOTRENTALS_DIR)/data; set HOTRENTALS_DIR" && exit 1)
+	cp $(HOTRENTALS_DIR)/data/address-points.db data/geo/address-points.db
+
+.PHONY: apikey
+apikey: .env ## Create a site API key: make apikey SITE=mertmetin (printed once; only its hash is stored)
+	@test -n "$(SITE)" || (echo "usage: make apikey SITE=<name>" && exit 1)
+	@set -a; . ./.env; set +a; \
+	POSTGRES_URL="postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@localhost:5433/$${POSTGRES_DB}?sslmode=disable" \
+	go run ./cmd/apikey -site $(SITE) -label "$(LABEL)"
+
+.PHONY: matchbench
+matchbench: ## Matcher benchmark: 1M synthetic saved searches (about a minute, ~3 GB RAM)
+	go run ./cmd/matchbench -searches 1000000 -events 200000 -shards 5
+
 .PHONY: lint
 lint: ## go vet and gofmt check
 	go vet $(GO_PKGS)

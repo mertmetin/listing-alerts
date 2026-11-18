@@ -1,6 +1,5 @@
 // Command api is the saved-search API that mertmetin.ca and hotrentals.ca
-// call. In milestone 0 it only proves the platform: it connects to every
-// backing service and serves health and metrics. Endpoints arrive in M3.
+// call (see internal/api), plus /healthz, /readyz and /metrics.
 package main
 
 import (
@@ -12,9 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mertmetin/listing-alerts/internal/api"
 	"github.com/mertmetin/listing-alerts/internal/config"
+	"github.com/mertmetin/listing-alerts/internal/db"
 	"github.com/mertmetin/listing-alerts/internal/health"
 	"github.com/mertmetin/listing-alerts/internal/platform"
+	"github.com/mertmetin/listing-alerts/internal/search"
 )
 
 func main() {
@@ -41,13 +43,28 @@ func run() error {
 	}
 	defer deps.Close()
 
+	for i := 0; ; i++ {
+		if _, err = db.Migrate(ctx, deps.PG); err == nil || i == 30 || ctx.Err() != nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		return err
+	}
+
 	checks := health.New(2 * time.Second)
 	deps.RegisterChecks(checks)
+	reg := platform.NewRegistry(cfg)
+	mux := platform.OpsMux(checks, reg)
+	api.New(search.Store{Pool: deps.PG}, log, reg).Routes(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           platform.OpsMux(checks, platform.NewRegistry(cfg)),
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
 	}
 	if err := platform.Serve(ctx, log, srv, cfg.ShutdownTimeout); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err

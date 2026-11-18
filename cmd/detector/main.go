@@ -19,6 +19,7 @@ import (
 	"github.com/mertmetin/listing-alerts/internal/config"
 	"github.com/mertmetin/listing-alerts/internal/db"
 	"github.com/mertmetin/listing-alerts/internal/detect"
+	"github.com/mertmetin/listing-alerts/internal/geocode"
 	"github.com/mertmetin/listing-alerts/internal/health"
 	"github.com/mertmetin/listing-alerts/internal/platform"
 )
@@ -69,6 +70,16 @@ func run() error {
 		Metrics: detect.NewMetrics(reg),
 		Log:     log,
 		Now:     time.Now,
+	}
+	if path := os.Getenv("ADDRESS_POINTS_DB"); path != "" {
+		g, err := geocode.Open(path)
+		if err != nil {
+			log.Warn("geocoding disabled", "err", err)
+		} else {
+			defer g.Close()
+			d.Geo = g
+			log.Info("geocoding on", "db", path, "fsa_fallbacks", g.FSAs())
+		}
 	}
 	batch := 500
 	if n, err := strconv.Atoi(os.Getenv("BATCH_SIZE")); err == nil && n > 0 {

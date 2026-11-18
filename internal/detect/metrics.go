@@ -14,6 +14,7 @@ type Metrics struct {
 	Events    *prometheus.CounterVec // events published, by type
 	Conflicts prometheus.Counter     // batches recomputed after a state conflict
 	Invalid   prometheus.Counter     // records that could not be decoded
+	Geocoded  *prometheus.CounterVec // geocoding lookups, by precision (address, fsa, none)
 	BatchTime prometheus.Histogram
 	// PipelineLatency: poller observed the change -> detector published the event.
 	PipelineLatency prometheus.Histogram
@@ -30,13 +31,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		Events:    prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Subsystem: sub, Name: "events_total", Help: "Listing events published, by type."}, []string{"type"}),
 		Conflicts: prometheus.NewCounter(prometheus.CounterOpts{Namespace: ns, Subsystem: sub, Name: "state_conflicts_total", Help: "Batches recomputed after a concurrent state write."}),
 		Invalid:   prometheus.NewCounter(prometheus.CounterOpts{Namespace: ns, Subsystem: sub, Name: "invalid_records_total", Help: "Records that could not be decoded and were skipped."}),
+		Geocoded:  prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Subsystem: sub, Name: "geocoded_total", Help: "Geocoding lookups by result precision."}, []string{"precision"}),
 		BatchTime: prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: ns, Subsystem: sub, Name: "batch_seconds", Help: "Load-apply-publish-save time per batch.", Buckets: prometheus.ExponentialBuckets(0.001, 2, 14)}),
 		PipelineLatency: prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: ns, Subsystem: sub, Name: "pipeline_latency_seconds",
 			Help: "Poller observation to listing event published.", Buckets: prometheus.ExponentialBuckets(0.005, 2, 14)}),
 		FeedLatency: prometheus.NewHistogram(prometheus.HistogramOpts{Namespace: ns, Subsystem: sub, Name: "feed_latency_seconds",
 			Help: "MLS modification time to listing event published.", Buckets: prometheus.ExponentialBuckets(1, 2, 12)}),
 	}
-	reg.MustRegister(m.Changes, m.Events, m.Conflicts, m.Invalid, m.BatchTime, m.PipelineLatency, m.FeedLatency)
+	reg.MustRegister(m.Changes, m.Events, m.Conflicts, m.Invalid, m.Geocoded, m.BatchTime, m.PipelineLatency, m.FeedLatency)
 	return m
 }
 

@@ -40,6 +40,17 @@ type State struct {
 	PublicSeen      bool     `json:"public_seen"`
 	Price           *float64 `json:"price,omitempty"`
 	TransactionType string   `json:"transaction_type,omitempty"`
+	// Geo caches the geocoding result for the listing's current address.
+	Geo *Geo `json:"geo,omitempty"`
+}
+
+// Geo is a cached geocoding result. Precision "" records a miss, so a
+// listing that cannot be placed is not looked up again until it moves.
+type Geo struct {
+	Addr      string  `json:"addr"`
+	Lat       float64 `json:"lat,omitempty"`
+	Lng       float64 `json:"lng,omitempty"`
+	Precision string  `json:"precision,omitempty"`
 }
 
 // Outcome says what Apply did with a change.

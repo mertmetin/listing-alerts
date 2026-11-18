@@ -49,11 +49,15 @@ type ListingEvent struct {
 	Price      *float64 `json:"price,omitempty"`
 	ClosePrice *float64 `json:"close_price,omitempty"` // VOW data: only for registered, logged-in users
 	// Public: may be shown on public (IDX) sites. False means VOW users only.
-	Public     bool            `json:"public"`
-	ModifiedAt time.Time       `json:"modified_at"` // feed timestamp of the change
-	ObservedAt time.Time       `json:"observed_at"` // poller saw it: start of pipeline latency
-	DetectedAt time.Time       `json:"detected_at"`
-	Listing    listing.Listing `json:"listing"`
+	Public     bool      `json:"public"`
+	ModifiedAt time.Time `json:"modified_at"` // feed timestamp of the change
+	ObservedAt time.Time `json:"observed_at"` // poller saw it: start of pipeline latency
+	DetectedAt time.Time `json:"detected_at"`
+	// GeoPrecision says how the listing's lat/lng were found: "address"
+	// (a civic address point), "fsa" (postal-area centre) or "" (none; the
+	// listing is matched by city only).
+	GeoPrecision string          `json:"geo_precision,omitempty"`
+	Listing      listing.Listing `json:"listing"`
 }
 
 // ListingEventID is deterministic in the triggering change, so reprocessing a

@@ -1,0 +1,49 @@
+{
+  "uid": "la-match",
+  "title": "Matching",
+  "description": "Matcher shards: alerts out, event ownership, match time, searches held.",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["listing-alerts"],
+  "panels": [
+    {
+      "type": "stat", "title": "Alerts in range, by type and audience", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "textMode": "value_and_name", "colorMode": "none" },
+      "targets": [{ "refId": "A", "expr": "sum by (type, audience) (increase(listing_alerts_match_alerts_total[$__range]))", "legendFormat": "{{type}} ({{audience}})" }]
+    },
+    {
+      "type": "timeseries", "title": "Events owned per shard / min", "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (service) (rate(listing_alerts_match_events_total{owner=\"owned\"}[10m])) * 60", "legendFormat": "{{service}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Match time per event p50 / p99", "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by (le) (rate(listing_alerts_match_match_seconds_bucket[15m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(listing_alerts_match_match_seconds_bucket[15m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Pipeline latency (poller saw the change → alert published)", "gridPos": { "x": 0, "y": 12, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by (le) (rate(listing_alerts_match_pipeline_latency_seconds_bucket[15m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(listing_alerts_match_pipeline_latency_seconds_bucket[15m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "bargauge", "title": "Searches held / index entries per shard", "gridPos": { "x": 12, "y": 12, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "listing_alerts_match_searches", "legendFormat": "{{service}} searches" },
+        { "refId": "B", "expr": "listing_alerts_match_index_entries", "legendFormat": "{{service}} entries" }
+      ]
+    }
+  ]
+}

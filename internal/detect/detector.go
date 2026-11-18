@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/mertmetin/listing-alerts/internal/event"
+	"github.com/mertmetin/listing-alerts/internal/geocode"
+	"github.com/mertmetin/listing-alerts/internal/listing"
 )
 
 // ErrConflict means another writer updated a listing since it was loaded.
@@ -27,10 +30,16 @@ type Publisher interface {
 	Publish(ctx context.Context, events []event.ListingEvent) error
 }
 
+// Geocoder places a listing on the map (geocode.Geocoder in production).
+type Geocoder interface {
+	Locate(l listing.Listing) (*geocode.Fix, error)
+}
+
 // Detector applies batches of changes.
 type Detector struct {
 	Store   Store
 	Pub     Publisher
+	Geo     Geocoder // optional: without it, events carry no coordinates
 	Metrics *Metrics
 	Log     *slog.Logger
 	Now     func() time.Time
@@ -96,6 +105,12 @@ func (d *Detector) once(ctx context.Context, batch []event.Change) error {
 		events = append(events, evs...)
 	}
 
+	if d.Geo != nil {
+		for i := range events {
+			d.place(&events[i], states, touched)
+		}
+	}
+
 	if err := d.Pub.Publish(ctx, events); err != nil {
 		return fmt.Errorf("publish: %w", err)
 	}
@@ -119,4 +134,45 @@ func (d *Detector) once(ctx context.Context, batch []event.Change) error {
 			"applied", counts[Applied], "backfill", counts[Backfill], "duplicate", counts[Duplicate], "stale", counts[Stale])
 	}
 	return nil
+}
+
+// place fills the event's coordinates, from the state's cache when the
+// address is unchanged, else from the geocoder (and caches the result).
+// Listings that already carry coordinates are left alone.
+func (d *Detector) place(e *event.ListingEvent, states map[string]State, touched map[string]bool) bool {
+	l := &e.Listing
+	if l.Latitude != nil && l.Longitude != nil {
+		e.GeoPrecision = "feed"
+		return true
+	}
+	s := states[e.ListingKey]
+	addr := strings.Join([]string{l.StreetNumber, l.StreetName, l.City, l.County, l.PostalCode}, "|")
+	if s.Geo == nil || s.Geo.Addr != addr {
+		g := &Geo{Addr: addr}
+		fix, err := d.Geo.Locate(*l)
+		if err != nil {
+			d.Log.Warn("geocoding failed", "listing", e.ListingKey, "err", err)
+			return false // leave the state alone: try again next time
+		}
+		if fix != nil {
+			g.Lat, g.Lng, g.Precision = fix.Point.Lat, fix.Point.Lng, string(fix.Precision)
+		}
+		d.Metrics.Geocoded.WithLabelValues(orNone(g.Precision)).Inc()
+		s.Geo = g
+		states[e.ListingKey] = s
+		touched[e.ListingKey] = true
+	}
+	if s.Geo.Precision != "" {
+		lat, lng := s.Geo.Lat, s.Geo.Lng
+		l.Latitude, l.Longitude = &lat, &lng
+		e.GeoPrecision = s.Geo.Precision
+	}
+	return true
+}
+
+func orNone(p string) string {
+	if p == "" {
+		return "none"
+	}
+	return p
 }

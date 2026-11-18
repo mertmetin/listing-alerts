@@ -126,12 +126,48 @@ services:
         SERVICE: detector
     environment:
       <<: *service-env
+      # Address points for geocoding (make geodata). Without the file the
+      # detector runs without coordinates and matching falls back to cities.
+      ADDRESS_POINTS_DB: /geo/address-points.db
+    volumes:
+      - ./data/geo:/geo:ro
     deploy:
       replicas: 2
     depends_on:
       postgres: { condition: service_healthy }
       redpanda-init: { condition: service_completed_successfully }
     restart: unless-stopped
+
+  # Matcher shards: each owns part of the map (consistent-hash ring over
+  # geohash cells). SHARD_COUNT must be the same on all of them.
+  matcher-0:
+    <<: &matcher
+      build:
+        context: .
+        args:
+          SERVICE: matcher
+      depends_on:
+        postgres: { condition: service_healthy }
+        redpanda-init: { condition: service_completed_successfully }
+      restart: unless-stopped
+    environment:
+      <<: *service-env
+      SHARD_INDEX: "0"
+      SHARD_COUNT: "3"
+
+  matcher-1:
+    <<: *matcher
+    environment:
+      <<: *service-env
+      SHARD_INDEX: "1"
+      SHARD_COUNT: "3"
+
+  matcher-2:
+    <<: *matcher
+    environment:
+      <<: *service-env
+      SHARD_INDEX: "2"
+      SHARD_COUNT: "3"
 
   # Pollers need PropTx tokens, so they only start with `make live`
   # (profile "live"). One replica per source: each cursor has one writer.
