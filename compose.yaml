@@ -46,11 +46,13 @@ services:
     command:
       - |
         set -e
-        rpk() { command rpk -X brokers=redpanda:9092 "$@"; }
+        rpk() { command rpk -X brokers=redpanda:9092 -X admin.hosts=redpanda:9644 "$@"; }
         for t in listing.changes listing.events alerts.pending; do
           rpk topic create "$$t" -p 12 -r 1 || true
         done
         rpk topic create alerts.dlq -p 3 -r 1 -c retention.ms=2592000000 || true
+        # Export consumer-group lag on /public_metrics (Grafana: Change detection).
+        rpk cluster config set enable_consumer_group_metrics '["group","partition","consumer_lag"]'
         rpk topic list
     restart: "no"
 
@@ -112,6 +114,22 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  # Stateless change detectors in one consumer group. Scale with
+  # `docker compose up -d --scale detector=N` (up to 12, the partition count).
+  detector:
+    build:
+      context: .
+      args:
+        SERVICE: detector
+    environment:
+      <<: *service-env
+    deploy:
+      replicas: 2
+    depends_on:
+      postgres: { condition: service_healthy }
       redpanda-init: { condition: service_completed_successfully }
     restart: unless-stopped
 

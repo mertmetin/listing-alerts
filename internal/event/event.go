@@ -74,6 +74,15 @@ func NewObserved(source string, l listing.Listing, observedAt time.Time, backfil
 	}
 }
 
+// Reappeared re-IDs an Observed change for a listing that comes back to a
+// source after a removal. Its content and ModifiedAt may equal the original
+// sighting's, and it must not share that sighting's ID. A crash-retry gives
+// it another ID; the detector's version check makes that harmless.
+func (c Change) Reappeared() Change {
+	c.ID = ID(Observed, c.Source, c.ListingKey, c.ContentHash+"\x00reappeared\x00"+c.ObservedAt.Format(time.RFC3339Nano), c.ModifiedAt)
+	return c
+}
+
 // NewRemoved builds a Removed change for a listing last seen with lastHash at lastModified.
 func NewRemoved(source, key, lastHash string, lastModified, observedAt time.Time) Change {
 	return Change{

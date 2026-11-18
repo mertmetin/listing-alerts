@@ -79,7 +79,9 @@ func (p *Poller) Step(ctx context.Context) (more bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("load versions: %w", err)
 	}
-	changes, snaps, skips := Diff(p.Source, fresh, prev, start, page.Backfill)
+	// Stamp ObservedAt when the records are in hand, not at step start, so
+	// PropTx response time is not counted as pipeline latency.
+	changes, snaps, skips := Diff(p.Source, fresh, prev, p.Now(), page.Backfill)
 	skips.Invalid = invalid
 
 	if err := p.Pub.Publish(ctx, changes); err != nil {

@@ -1,0 +1,59 @@
+{
+  "uid": "la-detect",
+  "title": "Change detection",
+  "description": "Detectors: changes in, typed listing events out, latency, consumer lag.",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["listing-alerts"],
+  "panels": [
+    {
+      "type": "stat", "title": "Events in range, by type", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "textMode": "value_and_name", "colorMode": "none" },
+      "targets": [{ "refId": "A", "expr": "sum by (type) (increase(listing_alerts_detect_events_total[$__range]))", "legendFormat": "{{type}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Listing events / hour", "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (type) (rate(listing_alerts_detect_events_total[15m])) * 3600", "legendFormat": "{{type}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Changes consumed / min, by outcome", "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (outcome) (rate(listing_alerts_detect_changes_total[5m])) * 60", "legendFormat": "{{outcome}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Pipeline latency (poller saw it → event out)", "gridPos": { "x": 0, "y": 12, "w": 8, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by (le) (rate(listing_alerts_detect_pipeline_latency_seconds_bucket[15m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(listing_alerts_detect_pipeline_latency_seconds_bucket[15m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Feed latency (MLS change → event out)", "gridPos": { "x": 8, "y": 12, "w": 8, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by (le) (rate(listing_alerts_detect_feed_latency_seconds_bucket[15m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(listing_alerts_detect_feed_latency_seconds_bucket[15m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Consumer lag (records behind)", "gridPos": { "x": 16, "y": 12, "w": 8, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (redpanda_group) (redpanda_kafka_consumer_group_lag_sum{redpanda_group=\"detector\"})", "legendFormat": "{{redpanda_group}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Replicas up / state conflicts", "gridPos": { "x": 0, "y": 19, "w": 24, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "count(up{job=\"detector\"} == 1)", "legendFormat": "replicas up" },
+        { "refId": "B", "expr": "sum(increase(listing_alerts_detect_state_conflicts_total[5m]))", "legendFormat": "conflicts (5m)" }
+      ]
+    }
+  ]
+}

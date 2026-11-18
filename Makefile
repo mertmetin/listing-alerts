@@ -25,6 +25,7 @@ env: .env ## Create .env with random local passwords if it does not exist
 .PHONY: up
 up: .env ## Build and start the whole stack, then wait until it is ready
 	$(COMPOSE) up -d --build --wait
+	@curl -fsS -X POST http://localhost:9091/-/reload >/dev/null || true
 	@./scripts/smoke.sh
 	@echo
 	@echo "  API        http://localhost:8081/readyz"
@@ -38,12 +39,17 @@ live: .env tokens ## Start the stack plus the PropTx and off-MLS pollers
 	@mkdir -p data/recordings data/offmls
 	@test -f data/offmls/private-listings.json || echo '[]' > data/offmls/private-listings.json
 	$(COMPOSE) --profile live up -d --build --wait
+	@curl -fsS -X POST http://localhost:9091/-/reload >/dev/null || true
 	@./scripts/smoke.sh
-	@echo "  Pollers: make logs-live   Metrics: http://localhost:3300/d/la-ingest"
+	@echo "  Pollers: make logs-live   Dashboards: http://localhost:3300/d/la-ingest  http://localhost:3300/d/la-detect"
 
 .PHONY: logs-live
 logs-live: ## Follow poller logs
 	$(COMPOSE) --profile live logs -f --tail=50 poller-vow poller-idx poller-offmls
+
+.PHONY: events
+events: ## Print the latest listing events (time, type, listing, prices, visibility)
+	@$(COMPOSE) exec -T redpanda rpk topic consume listing.events -o -25 -n 25 -f '%v\n' | ./scripts/events.py
 
 .PHONY: down
 down: ## Stop the stack (keeps data)

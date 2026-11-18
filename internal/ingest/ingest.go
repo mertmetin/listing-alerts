@@ -84,7 +84,11 @@ func Diff(source string, fresh []listing.Listing, prev map[string]Version, now t
 		}
 		v := Version{Hash: hash, ModifiedAt: l.ModifiedAt, Present: true}
 		prev[l.Key] = v
-		changes = append(changes, event.NewObserved(source, l, now, backfill))
+		c := event.NewObserved(source, l, now, backfill)
+		if seen && !old.Present {
+			c = c.Reappeared()
+		}
+		changes = append(changes, c)
 		snaps = append(snaps, Snapshot{Key: l.Key, Version: v, Listing: &l})
 	}
 	return changes, snaps, skips
