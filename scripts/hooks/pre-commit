@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Blocks a commit that contains anything that looks like a secret.
+# Install with `make hooks`.
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null; then
+  echo "pre-commit: gitleaks is not installed (brew install gitleaks); refusing to commit unscanned." >&2
+  exit 1
+fi
+gitleaks git --staged --redact --no-banner .

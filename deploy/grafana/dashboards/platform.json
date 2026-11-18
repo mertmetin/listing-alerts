@@ -1,0 +1,57 @@
+{
+  "uid": "la-platform",
+  "title": "Platform",
+  "description": "Service health and Redpanda throughput. Pipeline dashboards (latency, matches, deliveries) arrive with their milestones.",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "tags": ["listing-alerts"],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Services up",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "up{job=\"listing-alerts\"}", "legendFormat": "{{service}}" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }],
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "options": { "colorMode": "background", "textMode": "value_and_name" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Goroutines",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "go_goroutines{job=\"listing-alerts\"}", "legendFormat": "{{service}}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Heap in use",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{ "refId": "A", "expr": "go_memstats_heap_inuse_bytes{job=\"listing-alerts\"}", "legendFormat": "{{service}}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redpanda produce / fetch bytes per second",
+      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [{ "refId": "A", "expr": "sum by (redpanda_request) (rate(redpanda_kafka_request_bytes_total[1m]))", "legendFormat": "{{redpanda_request}}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redpanda partitions",
+      "gridPos": { "x": 12, "y": 5, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(redpanda_cluster_partitions)", "legendFormat": "partitions" }]
+    }
+  ]
+}

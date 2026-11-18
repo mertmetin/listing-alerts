@@ -1,0 +1,17 @@
+# Secrets
+.env
+.env.*
+!.env.example
+tokens.json
+*.pem
+*.key
+
+# Recorded MLS data stays on this machine (PropTx terms)
+/data/
+/recordings/
+
+# Build and tool output
+/bin/
+/tmp/
+coverage.out
+.DS_Store
