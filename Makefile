@@ -102,6 +102,27 @@ apikey: .env ## Create a site API key: make apikey SITE=mertmetin (printed once;
 matchbench: ## Matcher benchmark: 1M synthetic saved searches (about a minute, ~3 GB RAM)
 	go run ./cmd/matchbench -searches 1000000 -events 200000 -shards 5
 
+RUN ?= run1
+
+.PHONY: scale-up scale-down scale-burst scale-steady scale-replay chaos k6
+scale-up: .env ## Scale stack: 3-broker Redpanda, 3 detectors, 3 shards (stops the dev stack)
+	./scripts/scale.sh up
+scale-down: ## Remove the scale stack and its data
+	./scripts/scale.sh down
+scale-burst: ## 250K changes as fast as possible against 2K searches, then audit (RUN=name)
+	./scripts/scale.sh load -run $(RUN) -searches 2000 -mode burst -changes 250000 -pool 100000
+	./scripts/scale.sh audit -run $(RUN) -log data/load/$(RUN).changes.gz -wait 15m
+scale-steady: ## 2,000 changes/s for 2 minutes, then audit (RUN=name)
+	./scripts/scale.sh load -run $(RUN) -searches 2000 -mode steady -rate 2000 -duration 2m
+	./scripts/scale.sh audit -run $(RUN) -log data/load/$(RUN).changes.gz -wait 15m
+scale-replay: ## Replay the recorded PropTx pages at 1000x, then audit (RUN=name)
+	./scripts/scale.sh load -run $(RUN) -mode replay -speed 1000
+	./scripts/scale.sh audit -run $(RUN) -log data/load/$(RUN).changes.gz -wait 15m
+chaos: ## Steady load while a detector, a shard, a broker and delivery are SIGKILLed; then audit
+	./scripts/chaos.sh
+k6: ## k6 load test of the saved-search API (scale stack)
+	./scripts/scale.sh k6
+
 .PHONY: lint
 lint: ## go vet and gofmt check
 	go vet $(GO_PKGS)

@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: listing-alerts
+    static_configs:
+      - targets: ["api:8080"]
+        labels: { service: api }
+      - targets: ["delivery:8080"]
+        labels: { service: delivery }
+  - job_name: detector
+    dns_sd_configs:
+      - names: [detector]
+        type: A
+        port: 8080
+    relabel_configs:
+      - target_label: service
+        replacement: detector
+  - job_name: matcher
+    dns_sd_configs:
+      - names: [matcher-0, matcher-1, matcher-2]
+        type: A
+        port: 8080
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: service
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["redpanda-0:9644", "redpanda-1:9644", "redpanda-2:9644"]

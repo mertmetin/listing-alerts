@@ -135,3 +135,11 @@ func (l Log) Send(_ context.Context, m Message) error {
 	l.Out.Info("would send", "channel", l.Kind, "to", m.To, "text", m.SMS)
 	return nil
 }
+
+// Discard accepts every message without sending it. Load tests use it so
+// they measure the pipeline, not the mail server; everything up to the
+// send (queue, claims, rate limits, bookkeeping) still runs.
+type Discard struct{}
+
+func (Discard) Name() string                        { return "discard" }
+func (Discard) Send(context.Context, Message) error { return nil }

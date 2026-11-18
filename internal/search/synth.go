@@ -44,31 +44,64 @@ var ontario = []place{
 	{"Thunder Bay", geo.Point{Lat: 48.3809, Lng: -89.2477}, 0.8, 8},
 }
 
+// canada adds the other large Canadian markets to Ontario's, weighted by
+// population, for Canada-wide load tests.
+var canada = append(append([]place{}, ontario...), []place{
+	{"Montreal", geo.Point{Lat: 45.5019, Lng: -73.5674}, 25, 18},
+	{"Vancouver", geo.Point{Lat: 49.2827, Lng: -123.1207}, 17, 15},
+	{"Calgary", geo.Point{Lat: 51.0447, Lng: -114.0719}, 10, 15},
+	{"Edmonton", geo.Point{Lat: 53.5461, Lng: -113.4938}, 9, 14},
+	{"Quebec City", geo.Point{Lat: 46.8139, Lng: -71.2080}, 5, 10},
+	{"Winnipeg", geo.Point{Lat: 49.8951, Lng: -97.1384}, 5, 10},
+	{"Halifax", geo.Point{Lat: 44.6488, Lng: -63.5752}, 3, 8},
+	{"Saskatoon", geo.Point{Lat: 52.1332, Lng: -106.6700}, 2, 7},
+	{"Regina", geo.Point{Lat: 50.4452, Lng: -104.6189}, 1.6, 6},
+	{"Victoria", geo.Point{Lat: 48.4284, Lng: -123.3656}, 2.5, 6},
+}...)
+
 var subTypes = []string{"Detached", "Semi-Detached", "Att/Row/Townhouse", "Condo Apartment", "Condo Townhouse", "Duplex", "Link", "Lower Level"}
 
 // Synth generates synthetic searches and events.
 type Synth struct {
-	rng   *rand.Rand
-	total float64
+	rng    *rand.Rand
+	total  float64
+	places []place
 }
 
-// NewSynth seeds a generator (same seed, same data).
-func NewSynth(seed uint64) *Synth {
-	s := &Synth{rng: rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))}
-	for _, p := range ontario {
+// NewSynth seeds a generator over Ontario (same seed, same data).
+func NewSynth(seed uint64) *Synth { return newSynth(seed, ontario) }
+
+// NewSynthCanada seeds a generator over Canada's large markets.
+func NewSynthCanada(seed uint64) *Synth { return newSynth(seed, canada) }
+
+func newSynth(seed uint64, places []place) *Synth {
+	s := &Synth{rng: rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)), places: places}
+	for _, p := range places {
 		s.total += p.weight
 	}
 	return s
 }
 
+// Rand exposes the generator's source (load generator lifecycles).
+func (s *Synth) Rand() *rand.Rand { return s.rng }
+
+// Place returns a population-weighted city name and a point in it.
+func (s *Synth) Place() (string, geo.Point) {
+	p := s.place()
+	return p.name, s.near(p.center, p.radius*1.1)
+}
+
+// SubType returns a random property sub-type.
+func (s *Synth) SubType() string { return subTypes[s.rng.IntN(len(subTypes))] }
+
 func (s *Synth) place() place {
 	x := s.rng.Float64() * s.total
-	for _, p := range ontario {
+	for _, p := range s.places {
 		if x -= p.weight; x <= 0 {
 			return p
 		}
 	}
-	return ontario[0]
+	return s.places[0]
 }
 
 // near returns a point within km of c (uniform over the disc).

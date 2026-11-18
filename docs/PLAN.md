@@ -36,7 +36,7 @@ The README reports measured sustained throughput and what limited it.
 | M2 ✅ | Change detector: stateless consumer group emitting NEW, PRICE_DROP, SOLD/LEASED, BACK_ON_MARKET with version checks | Same output with 1 or N workers; replays are no-ops |
 | M3 ✅ | Saved-search API + matcher: per-site API keys; geohash-cell index with range filters; consistent-hash ring of cells across matcher shards | Benchmark of 1M searches with p99 match time |
 | M4 ✅ | Delivery: outbox keyed by (search, event), retries with backoff, dead-letter topic, per-user rate limit with digests, pluggable channels (Gmail email first) | Exactly one alert per (search, event) under retries |
-| M5 | Scale proof: synthetic Canada-wide generator, 100-1000x replay, k6, 5-node kind cluster, latency dashboards, chaos runs with a lost-alert auditor | `make bench` and `make chaos` print reports |
+| M5 ✅ | Scale proof: synthetic Canada-wide generator, 100-1000x replay, k6, 5-node kind cluster, latency dashboards, chaos runs with a lost-alert auditor | `make bench` and `make chaos` print reports |
 | M6 | Production: one small VPS (Hetzner or OVH Canada) on Compose, shadow mode next to the current alerts, then cut over; "Save this search" in reso-idx and mertmetin.ca; hotrentals hookup; README write-up | Real alerts come from the new engine |
 
 ## Rules

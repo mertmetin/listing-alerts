@@ -86,9 +86,14 @@ func run() error {
 	checks := health.New(2 * time.Second)
 	deps.RegisterChecks(checks)
 
+	var channel deliver.Channel = smtp
+	if os.Getenv("CHANNEL") == "discard" {
+		channel = deliver.Discard{}
+		log.Warn("CHANNEL=discard: messages are accepted and dropped (load tests only)")
+	}
 	newSender := func() *deliver.Sender {
 		return &deliver.Sender{
-			Store: store, Limiter: deliver.RedisLimiter{Client: deps.Redis, Now: time.Now}, Channel: smtp,
+			Store: store, Limiter: deliver.RedisLimiter{Client: deps.Redis, Now: time.Now}, Channel: channel,
 			Render: deliver.Renderer{Sites: sites, UnsubURL: env("UNSUBSCRIBE_URL", "http://localhost:8081/v1/unsubscribe"),
 				UnsubSecret: []byte(secret), Domain: env("MESSAGE_ID_DOMAIN", "mertmetin.ca")},
 			DLQ:     deliver.KafkaDLQ{Client: deps.Kafka, Topic: deliver.TopicDLQ},

@@ -7,12 +7,30 @@ price drops, sold or leased (with the price where the data allows it) and back o
 It is built for two production sites, [mertmetin.ca](https://mertmetin.ca) (homes for sale) and
 [hotrentals.ca](https://hotrentals.ca) (Ontario rentals), and load-tested at Canada-wide volume.
 
-> **Status: milestone 4 of 6.** Live on the PropTx VOW and IDX feeds (about 89K and 81K residential listings)
+> **Status: milestone 5 of 6.** Live on the PropTx VOW and IDX feeds (about 89K and 81K residential listings)
 > and hotrentals.ca's off-MLS rentals: pollers → change detection with geocoding → sharded matching against
-> saved searches (p50 0.4 ms against 1M) → email delivery with digests, per-user rate limits, retries, a
-> dead-letter topic and one-click unsubscribe. In development all email goes to Mailpit. Scale and chaos
-> tests come next. Design notes: [ingestion](docs/design/ingestion.md), [change detection](docs/design/detection.md),
-> [matching](docs/design/matching.md), [delivery](docs/design/delivery.md); plan: [docs/PLAN.md](docs/PLAN.md).
+> saved searches → email delivery with digests, rate limits, retries, a dead-letter topic and one-click
+> unsubscribe. Next: production on a small VPS. Design notes: [ingestion](docs/design/ingestion.md),
+> [change detection](docs/design/detection.md), [matching](docs/design/matching.md),
+> [delivery](docs/design/delivery.md), [scale and chaos](docs/design/scale.md); plan: [docs/PLAN.md](docs/PLAN.md).
+
+## Results
+
+Measured on one laptop (Apple M-series, 10 cores, Docker with 8 GB). Details and method are in
+[docs/design/scale.md](docs/design/scale.md).
+
+| Test | Result |
+| --- | --- |
+| Burst: 250K changes re-sent at once (3-broker cluster, 3 detectors, 3 shards) | drained in **8.6 s** (29K changes/s; 49K alerts/s matched) |
+| Latency at steady load, change → alert published | **p50 6 ms, p99 103 ms** |
+| Chaos: a detector, a matcher shard, a broker and delivery SIGKILLed under 1,500 changes/s | **0 alerts lost, 0 duplicated** (364,465 audited) |
+| Matching against 1M saved searches, one core | p50 0.37 ms, p99 1.98 ms; 14.7K events/s on 10 cores |
+| Saved-search API (k6, ~960 req/s) | p99 8 ms create, 5.7 ms list, 0 errors |
+| Live: MLS change → email in Mailpit | about 1.5–2.5 min, mostly the 60 s poll |
+
+The auditor proves "nothing lost" exactly rather than by sampling. It replays the generated changes through the
+same rule functions to derive every event and alert ID that must exist, then checks each one against what the
+system produced.
 
 ## Architecture (target)
 
