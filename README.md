@@ -7,8 +7,10 @@ price drops, sold or leased (with the price where the data allows it) and back o
 It is built for two production sites, [mertmetin.ca](https://mertmetin.ca) (homes for sale) and
 [hotrentals.ca](https://hotrentals.ca) (Ontario rentals), and load-tested at Canada-wide volume.
 
-> **Status: milestone 0 of 6.** The platform runs: Redpanda, Postgres, Redis, Prometheus, Grafana and Mailpit,
-> plus an API service that checks all of them. The pipeline comes next. See [docs/PLAN.md](docs/PLAN.md).
+> **Status: milestone 1 of 6.** Ingestion runs against the live PropTx VOW and IDX feeds (about 89K and 81K
+> residential listings) and hotrentals.ca's off-MLS rentals, publishing deduplicated, idempotent change events
+> to Redpanda. Change detection comes next. See [docs/PLAN.md](docs/PLAN.md) and
+> [docs/design/ingestion.md](docs/design/ingestion.md).
 
 ## Architecture (target)
 
@@ -16,7 +18,7 @@ It is built for two production sites, [mertmetin.ca](https://mertmetin.ca) (home
 flowchart LR
     subgraph Sources
         V[PropTx VOW<br/>for sale + sold]
-        I[PropTx IDX<br/>for lease]
+        I[PropTx IDX<br/>public display]
         O[Off-MLS rentals]
     end
     V & I & O --> P[Pollers<br/>keyset cursor]
@@ -37,13 +39,15 @@ You need Docker and Go 1.27+.
 ```bash
 make up      # creates .env with random local passwords, builds, starts, runs the smoke test
 make test    # unit tests with the race detector
+make itest   # integration tests against the running stack (Postgres, Redpanda)
+make live    # also starts the pollers; needs PropTx tokens (make tokens copies them from the macOS Keychain)
 make down    # stop (make clean also deletes the data)
 ```
 
 | Service | URL |
 | --- | --- |
 | API readiness | http://localhost:8081/readyz |
-| Grafana | http://localhost:3300 (user `admin`, password in `.env`) |
+| Grafana | http://localhost:3300 (user `admin`, password in `.env`): *Platform* and *Ingestion* dashboards |
 | Prometheus | http://localhost:9091 |
 | Redpanda Console | http://localhost:8180 |
 | Mailpit (caught emails) | http://localhost:8025 |

@@ -33,13 +33,25 @@ up: .env ## Build and start the whole stack, then wait until it is ready
 	@echo "  Redpanda   http://localhost:8180  (Console)   localhost:19092 (Kafka API)"
 	@echo "  Mailpit    http://localhost:8025"
 
+.PHONY: live
+live: .env tokens ## Start the stack plus the PropTx and off-MLS pollers
+	@mkdir -p data/recordings data/offmls
+	@test -f data/offmls/private-listings.json || echo '[]' > data/offmls/private-listings.json
+	$(COMPOSE) --profile live up -d --build --wait
+	@./scripts/smoke.sh
+	@echo "  Pollers: make logs-live   Metrics: http://localhost:3300/d/la-ingest"
+
+.PHONY: logs-live
+logs-live: ## Follow poller logs
+	$(COMPOSE) --profile live logs -f --tail=50 poller-vow poller-idx poller-offmls
+
 .PHONY: down
 down: ## Stop the stack (keeps data)
-	$(COMPOSE) down
+	$(COMPOSE) --profile live down
 
 .PHONY: clean
 clean: ## Stop the stack and delete its volumes
-	$(COMPOSE) down -v
+	$(COMPOSE) --profile live down -v
 
 .PHONY: logs
 logs: ## Follow service logs
@@ -52,6 +64,17 @@ smoke: ## Check a running stack end to end
 .PHONY: test
 test: ## Unit tests with the race detector
 	go test -race -count=1 $(GO_PKGS)
+
+.PHONY: itest
+itest: .env ## Integration tests against the running stack (make up first)
+	@set -a; . ./.env; set +a; \
+	POSTGRES_URL="postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@localhost:5433/$${POSTGRES_DB}?sslmode=disable" \
+	KAFKA_BROKERS=localhost:19092 \
+	go test -race -count=1 -tags integration ./...
+
+.PHONY: tokens
+tokens: .env ## Copy the PropTx tokens from the macOS Keychain into .env (never printed)
+	@./scripts/tokens.sh
 
 .PHONY: lint
 lint: ## go vet and gofmt check

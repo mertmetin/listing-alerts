@@ -8,6 +8,18 @@ scrape_configs:
       - targets: ["api:8080"]
         labels: { service: api }
 
+  # Pollers run only with `make live`; DNS discovery finds the ones that are up
+  # without reporting the others as down.
+  - job_name: pollers
+    dns_sd_configs:
+      - names: [poller-vow, poller-idx, poller-offmls]
+        type: A
+        port: 8080
+        refresh_interval: 15s
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: service
+
   - job_name: redpanda
     metrics_path: /public_metrics
     static_configs:

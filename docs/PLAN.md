@@ -31,8 +31,8 @@ The README reports measured sustained throughput and what limited it.
 
 | # | Milestone | Done when |
 | --- | --- | --- |
-| M0 | Repo skeleton: Compose stack (Redpanda, Postgres, Redis, Prometheus, Grafana, Mailpit), Makefile, CI, secret scanning | `make up` starts everything and the smoke test passes |
-| M1 | Ingestion: Go poller with a keyset cursor on `(ModificationTimestamp, ListingKey)` for VOW sale, IDX lease and off-MLS sources; snapshots in Postgres; idempotent producer keyed by ListingKey; local recorder for replay | Tests cover cursor edge cases, dedup and re-delivery |
+| M0 ✅ | Repo skeleton: Compose stack (Redpanda, Postgres, Redis, Prometheus, Grafana, Mailpit), Makefile, CI, secret scanning | `make up` starts everything and the smoke test passes |
+| M1 ✅ | Ingestion: Go poller with a keyset cursor on `(ModificationTimestamp, ListingKey)` for VOW sale, IDX lease and off-MLS sources; snapshots in Postgres; idempotent producer keyed by ListingKey; local recorder for replay | Tests cover cursor edge cases, dedup and re-delivery |
 | M2 | Change detector: stateless consumer group emitting NEW, PRICE_DROP, SOLD/LEASED, BACK_ON_MARKET with version checks | Same output with 1 or N workers; replays are no-ops |
 | M3 | Saved-search API + matcher: per-site API keys; geohash-cell index with range filters; consistent-hash ring of cells across matcher shards | Benchmark of 1M searches with p99 match time |
 | M4 | Delivery: outbox keyed by (search, event), retries with backoff, dead-letter topic, per-user rate limit with digests, pluggable channels (Gmail email first) | Exactly one alert per (search, event) under retries |

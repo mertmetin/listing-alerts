@@ -115,6 +115,43 @@ services:
       redpanda-init: { condition: service_completed_successfully }
     restart: unless-stopped
 
+  # Pollers need PropTx tokens, so they only start with `make live`
+  # (profile "live"). One replica per source: each cursor has one writer.
+  poller-vow:
+    <<: &poller
+      build:
+        context: .
+        args:
+          SERVICE: poller
+      depends_on:
+        postgres: { condition: service_healthy }
+        redpanda-init: { condition: service_completed_successfully }
+      restart: unless-stopped
+      profiles: ["live"]
+      volumes:
+        - ./data:/data
+    environment:
+      <<: *service-env
+      SOURCE: vow
+      PROPTX_VOW_TOKEN: ${PROPTX_VOW_TOKEN:-}
+      RECORD_DIR: /data/recordings
+
+  poller-idx:
+    <<: *poller
+    environment:
+      <<: *service-env
+      SOURCE: idx
+      PROPTX_IDX_TOKEN: ${PROPTX_IDX_TOKEN:-}
+      RECORD_DIR: /data/recordings
+
+  poller-offmls:
+    <<: *poller
+    environment:
+      <<: *service-env
+      SOURCE: offmls
+      OFFMLS_FILES: /data/offmls/private-listings.json,/data/offmls/submitted-listings.json
+      POLL_INTERVAL: 30s
+
   prometheus:
     image: prom/prometheus:v3.15.1
     command:
@@ -122,7 +159,9 @@ services:
       - --storage.tsdb.retention.time=7d
       - --web.enable-lifecycle
     volumes:
-      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # A directory, not the file: a single-file bind mount pins the old inode,
+      # so an edited config would never be seen.
+      - ./deploy/prometheus:/etc/prometheus:ro
       - prometheus:/prometheus
     ports:
       - "9091:9090"

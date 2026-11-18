@@ -1,0 +1,54 @@
+{
+  "uid": "la-ingest",
+  "title": "Ingestion",
+  "description": "Pollers: feed records in, change events out, dedup, cursor lag.",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "tags": ["listing-alerts"],
+  "panels": [
+    {
+      "type": "timeseries", "title": "Events published / min", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (source, kind) (rate(listing_alerts_ingest_events_published_total[5m])) * 60", "legendFormat": "{{source}} {{kind}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Records read vs. skipped / min", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (source) (rate(listing_alerts_ingest_records_fetched_total[5m])) * 60", "legendFormat": "{{source}} read" },
+        { "refId": "B", "expr": "sum by (source, reason) (rate(listing_alerts_ingest_records_skipped_total[5m])) * 60", "legendFormat": "{{source}} skipped: {{reason}}" }
+      ]
+    },
+    {
+      "type": "stat", "title": "Dedup ratio (skipped / read, 1h)", "gridPos": { "x": 0, "y": 8, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 1 } },
+      "targets": [{ "refId": "A", "expr": "sum by (source) (increase(listing_alerts_ingest_records_skipped_total[1h])) / clamp_min(sum by (source) (increase(listing_alerts_ingest_records_fetched_total[1h])), 1)", "legendFormat": "{{source}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Cursor lag", "gridPos": { "x": 6, "y": 8, "w": 9, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{ "refId": "A", "expr": "listing_alerts_ingest_cursor_lag_seconds", "legendFormat": "{{source}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Step duration p50 / p99", "gridPos": { "x": 15, "y": 8, "w": 9, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by (le, source) (rate(listing_alerts_ingest_step_seconds_bucket[5m])))", "legendFormat": "{{source}} p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le, source) (rate(listing_alerts_ingest_step_seconds_bucket[5m])))", "legendFormat": "{{source}} p99" }
+      ]
+    },
+    {
+      "type": "stat", "title": "Errors (1h) / baseline running", "gridPos": { "x": 0, "y": 14, "w": 24, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (source) (increase(listing_alerts_ingest_step_errors_total[1h]))", "legendFormat": "{{source}} errors" },
+        { "refId": "B", "expr": "listing_alerts_ingest_baseline_running", "legendFormat": "{{source}} baseline" }
+      ]
+    }
+  ]
+}
