@@ -15,3 +15,6 @@ alerts.mertmetin.ca {
 		respond "Not found" 404
 	}
 }
+
+# Other apps on this box (e.g. the social scheduler) drop their own site blocks here.
+import /etc/caddy/sites/*.caddy
