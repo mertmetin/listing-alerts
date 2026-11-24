@@ -4,14 +4,25 @@ A real-time listing alert engine in Go. It ingests MLS® listing changes from RE
 what changed, matches each change against saved searches, and sends alerts within a second: new listings,
 price drops, sold or leased (with the price where the data allows it) and back on the market.
 
+It is also the **listing database** for the sites it serves: one copy of every public listing (full record,
+photos and rooms) that the sites read as a change feed instead of each calling the MLS board's API.
+
 It is built for two production sites, [mertmetin.ca](https://mertmetin.ca) (homes for sale) and
 [hotrentals.ca](https://hotrentals.ca) (Ontario rentals), and load-tested at Canada-wide volume.
 
 > **Status: in production.** Runs on a small VPS in Toronto against the live PropTx VOW and IDX feeds
-> (88,549 and 80,120 residential listings): pollers → change detection with geocoding → saved-search matching
-> → email delivery with digests, rate limits, retries, a dead-letter topic and one-click unsubscribe. The API is
-> at `https://alerts.mertmetin.ca`. Email runs in shadow mode (Mailpit) until it's compared with the current
-> alerts. Design notes: [ingestion](docs/design/ingestion.md), [change detection](docs/design/detection.md),
+> (about 88,500 and 80,000 residential listings): pollers → change detection with geocoding → saved-search
+> matching → email delivery with digests, rate limits, retries, a dead-letter topic and one-click unsubscribe.
+> The API is at `https://alerts.mertmetin.ca`.
+>
+> - **Listing hub (live since 2026-11-24):** both sites take their listings from the engine every 5 minutes:
+>   mertmetin.ca reads Ottawa homes for sale and rent, hotrentals.ca reads every Ontario rental, with photos and
+>   rooms. Listing pages fall back to the hub for photos when the board's API drops a connection.
+> - **Saved searches:** mertmetin.ca's saved searches (including drawn areas) are kept in step with the engine
+>   every 5 minutes.
+> - **Email** runs in shadow mode (Mailpit) until it's compared with the sites' current alerts.
+>
+> Design notes: [ingestion](docs/design/ingestion.md), [change detection](docs/design/detection.md),
 > [matching](docs/design/matching.md), [delivery](docs/design/delivery.md), [scale and chaos](docs/design/scale.md),
 > [production](docs/design/production.md); plan: [docs/PLAN.md](docs/PLAN.md).
 
@@ -33,25 +44,32 @@ The auditor proves "nothing lost" exactly rather than by sampling. It replays th
 same rule functions to derive every event and alert ID that must exist, then checks each one against what the
 system produced.
 
-## Architecture (target)
+## Architecture
 
 ```mermaid
 flowchart LR
     subgraph Sources
         V[PropTx VOW<br/>for sale + sold]
         I[PropTx IDX<br/>public display]
-        O[Off-MLS rentals]
     end
-    V & I & O --> P[Pollers<br/>keyset cursor]
+    V & I --> P[Pollers<br/>keyset cursor]
     P -- listing.changes<br/>keyed by ListingKey --> D[Change detector<br/>stateless workers]
     D -- listing.events --> M[Matcher shards<br/>geohash ring]
     M -- alerts.pending --> A[Delivery<br/>retry, rate limit]
     A -- failures --> DLQ[(alerts.dlq)]
-    A --> E[Email / SMS / push]
-    API[Saved-search API] --> PG[(Postgres)]
+    A --> E[Email]
+    P -- IDX records,<br/>photos, rooms --> H[(Listing hub<br/>Postgres)]
+    API[API] --> PG[(Postgres:<br/>searches)]
     PG -. searches .-> M
-    S1[mertmetin.ca] & S2[hotrentals.ca] --> API
+    H --> API
+    S1[mertmetin.ca] & S2[hotrentals.ca] -- saved searches,<br/>listing changes --> API
 ```
+
+The IDX poller writes every listing it reads to the hub before it moves its cursor, so the hub never misses a
+change. Photos and rooms are fetched only for new listings or when a listing's photos change. Each row gets a
+sequence number from a single writer, so a site that remembers the last number it stored can ask for "everything
+after N" and never skip a change. Listings that leave the feed stay in the hub as `present: false` so sites can
+remove them.
 
 ## Run it
 
@@ -93,8 +111,36 @@ curl -X POST http://localhost:8081/v1/searches -H "Authorization: Bearer $SITE_K
 `GET /v1/searches?user_id=…`, `GET|PUT|DELETE /v1/searches/{id}`. Searches can use drawn `areas` (up to 10
 polygons) and/or `cities`, plus `min_price`, `max_price`, `min_beds`, `min_baths`, `types` and `events`.
 
+### Listing hub API
+
+The same site keys read the hub. The IDX feed is public-display data only (VOW-only listings and sold prices
+never go through it).
+
+```bash
+# Everything changed after sequence 0 (a full copy on the first call), Ottawa homes for sale, 500 at a time.
+curl -H "Authorization: Bearer $SITE_KEY" \
+  "https://alerts.mertmetin.ca/v1/listings/changes?after=0&limit=500&county=Ottawa&transaction=sale"
+# → {"listings": [{"seq": 41, "key": "X1234567", "present": true, "record": {…}, "photos": [{"large": …, "medium": …,
+#    "thumb": …}], "rooms": [{"type": "Kitchen", "level": "Main", "length": 4.2, "width": 3.1}]}, …],
+#    "next": 541, "more": true}
+
+# One listing as the hub holds it now (404 if it has never been seen).
+curl -H "Authorization: Bearer $SITE_KEY" https://alerts.mertmetin.ca/v1/listings/X1234567
+```
+
+`transaction` is `sale` or `lease`; `limit` is 1 to 1000. Sites store `next` and pass it as `after` on the next
+call; `more: true` means another page is ready now.
+
 Run `make geodata` once to copy hotrentals.ca's Ontario address points (municipal open data) for geocoding, and
 `make matchbench` for the 1M-search benchmark.
+
+## Production
+
+One 4 GB VPS runs the whole stack with Docker Compose (`deploy/prod/compose.yaml`): a single Redpanda broker,
+Postgres, Redis, every service with a memory cap, and Caddy for TLS in front of `/v1/*` only. `scripts/deploy.sh`
+pushes, then builds one image on the server in one capped compile (building several Go images at once ran the box
+out of memory) and restarts the services. Postgres is backed up nightly. Details:
+[docs/design/production.md](docs/design/production.md).
 
 ## License
 
