@@ -3,6 +3,7 @@ package search
 import (
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/mertmetin/listing-alerts/internal/event"
@@ -415,6 +416,7 @@ type typeBits struct {
 func newTypeBits() *typeBits { return &typeBits{bits: map[string]uint32{}} }
 
 func (t *typeBits) lookup(s string) uint32 {
+	s = strings.ToLower(strings.TrimSpace(s))
 	t.mu.RLock()
 	b, ok := t.bits[s]
 	t.mu.RUnlock()
@@ -425,6 +427,7 @@ func (t *typeBits) lookup(s string) uint32 {
 }
 
 func (t *typeBits) bit(s string) uint32 {
+	s = strings.ToLower(strings.TrimSpace(s)) // "Att/Row/Townhouse" = "att/row/townhouse"
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if b, ok := t.bits[s]; ok {

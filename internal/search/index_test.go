@@ -146,6 +146,21 @@ func TestCityNames(t *testing.T) {
 	}
 }
 
+func TestTypesMatchIgnoringCase(t *testing.T) {
+	ix := NewIndex()
+	pt := geo.Point{Lat: 45.35, Lng: -75.78}
+	s := &Search{ID: "t", Audience: Public, Transaction: "lease", Areas: []geo.Polygon{geo.Circle(pt, 3, 10)},
+		Types: []string{"att/row/townhouse", "condo apartment"}}
+	ix.Upsert(Prepare(s), nil)
+	q := Query{Point: pt, HasPoint: true, Lease: true, Beds: -1, Baths: -1, Type: event.NewListing, Public: true}
+	for sub, want := range map[string]int{"Att/Row/Townhouse": 1, "Condo Apartment": 1, "Detached": 0} {
+		q.SubType = sub
+		if got := len(ix.Match(q, nil)); got != want {
+			t.Errorf("%s: %d matches, want %d", sub, got, want)
+		}
+	}
+}
+
 func TestUpsertDeleteCompact(t *testing.T) {
 	ix := NewIndex()
 	pt := geo.Point{Lat: 43.65, Lng: -79.38}
