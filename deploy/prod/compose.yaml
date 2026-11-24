@@ -2,7 +2,7 @@
 # one replica each, durable Redpanda (fsync on), nothing published except
 # Caddy on 80/443. Secrets come from /opt/listing-alerts/.env (never in git).
 #
-#   scripts/deploy.sh            (from the Mac: build, ship images, restart)
+#   scripts/deploy.sh            (from the Mac: pull, build one image, restart)
 name: listing-alerts
 
 x-env: &env
@@ -11,9 +11,11 @@ x-env: &env
   KAFKA_BROKERS: redpanda:9092
   LOG_LEVEL: info
 
-# Images are built on the Mac and shipped by scripts/deploy.sh; the VPS
-# never compiles (building 5 Go images at once swamped its 4 GB).
+# All services run one image, listing-alerts/app:prod, built on the VPS in a
+# single memory-capped compile (scripts/deploy.sh). Building five images in
+# parallel there ran its 4 GB out of memory.
 x-app: &app
+  image: listing-alerts/app:prod
   pull_policy: never
   restart: unless-stopped
   mem_limit: 256m
@@ -98,7 +100,7 @@ services:
 
   poller-vow:
     <<: *app
-    image: listing-alerts/poller:prod
+    entrypoint: ["/poller"]
     environment:
       <<: *env
       SOURCE: vow
@@ -108,7 +110,7 @@ services:
 
   poller-idx:
     <<: *app
-    image: listing-alerts/poller:prod
+    entrypoint: ["/poller"]
     environment:
       <<: *env
       SOURCE: idx
@@ -118,7 +120,7 @@ services:
 
   detector:
     <<: *app
-    image: listing-alerts/detector:prod
+    entrypoint: ["/detector"]
     environment:
       <<: *env
       ADDRESS_POINTS_DB: /geo/address-points.db
@@ -127,12 +129,12 @@ services:
 
   matcher:
     <<: *app
-    image: listing-alerts/matcher:prod
+    entrypoint: ["/matcher"]
     environment: { <<: *env, SHARD_INDEX: "0", SHARD_COUNT: "1" }
 
   api:
     <<: *app
-    image: listing-alerts/api:prod
+    entrypoint: ["/api"]
     environment:
       <<: *env
       UNSUBSCRIBE_SECRET: ${UNSUBSCRIBE_SECRET:?missing}
@@ -141,7 +143,7 @@ services:
   # View it over an SSH tunnel: ssh -L 8025:localhost:8025 <server>.
   delivery:
     <<: *app
-    image: listing-alerts/delivery:prod
+    entrypoint: ["/delivery"]
     environment:
       <<: *env
       UNSUBSCRIBE_SECRET: ${UNSUBSCRIBE_SECRET:?missing}
