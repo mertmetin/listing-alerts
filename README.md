@@ -7,12 +7,13 @@ price drops, sold or leased (with the price where the data allows it) and back o
 It is built for two production sites, [mertmetin.ca](https://mertmetin.ca) (homes for sale) and
 [hotrentals.ca](https://hotrentals.ca) (Ontario rentals), and load-tested at Canada-wide volume.
 
-> **Status: milestone 5 of 6.** Live on the PropTx VOW and IDX feeds (about 89K and 81K residential listings)
-> and hotrentals.ca's off-MLS rentals: pollers → change detection with geocoding → sharded matching against
-> saved searches → email delivery with digests, rate limits, retries, a dead-letter topic and one-click
-> unsubscribe. Next: production on a small VPS. Design notes: [ingestion](docs/design/ingestion.md),
-> [change detection](docs/design/detection.md), [matching](docs/design/matching.md),
-> [delivery](docs/design/delivery.md), [scale and chaos](docs/design/scale.md); plan: [docs/PLAN.md](docs/PLAN.md).
+> **Status: in production.** Runs on a small VPS in Toronto against the live PropTx VOW and IDX feeds
+> (88,549 and 80,120 residential listings): pollers → change detection with geocoding → saved-search matching
+> → email delivery with digests, rate limits, retries, a dead-letter topic and one-click unsubscribe. The API is
+> at `https://alerts.mertmetin.ca`. Email runs in shadow mode (Mailpit) until it's compared with the current
+> alerts. Design notes: [ingestion](docs/design/ingestion.md), [change detection](docs/design/detection.md),
+> [matching](docs/design/matching.md), [delivery](docs/design/delivery.md), [scale and chaos](docs/design/scale.md),
+> [production](docs/design/production.md); plan: [docs/PLAN.md](docs/PLAN.md).
 
 ## Results
 
