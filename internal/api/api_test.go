@@ -264,6 +264,41 @@ func (f *fakeListings) Changes(_ context.Context, after int64, limit int, filt h
 	return []hub.Listing{{Seq: after + 1, Key: "X1", Present: true}, {Seq: after + 2, Key: "X2"}}, nil
 }
 
+func (f *fakeListings) Get(_ context.Context, key string) (hub.Listing, bool, error) {
+	if key != "X1" {
+		return hub.Listing{}, false, nil
+	}
+	return hub.Listing{Seq: 7, Key: "X1", Present: true, Photos: []hub.Photo{{Large: "https://img/1.jpg"}}}, true, nil
+}
+
+func TestListingGet(t *testing.T) {
+	st := &memStore{rows: map[string]*search.Search{}, keys: map[string]string{"k-mm": "mertmetin"}}
+	s := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), prometheus.NewRegistry())
+	s.Hub = &fakeListings{}
+	mux := http.NewServeMux()
+	s.Routes(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	if code, _ := call(t, srv, "GET", "/v1/listings/X1", "", ""); code != 401 {
+		t.Fatalf("no key: %d", code)
+	}
+	code, out := call(t, srv, "GET", "/v1/listings/X1", "k-mm", "")
+	if code != 200 || out["key"] != "X1" || len(out["photos"].([]any)) != 1 {
+		t.Fatalf("get: %d %v", code, out)
+	}
+	if code, _ := call(t, srv, "GET", "/v1/listings/X9", "k-mm", ""); code != 404 {
+		t.Fatalf("unknown: %d", code)
+	}
+	if code, _ := call(t, srv, "GET", "/v1/listings/bad%20key", "k-mm", ""); code != 400 {
+		t.Fatalf("bad key: %d", code)
+	}
+	// The feed route still wins over {key}.
+	if code, out := call(t, srv, "GET", "/v1/listings/changes?after=0", "k-mm", ""); code != 200 || out["listings"] == nil {
+		t.Fatalf("changes shadowed: %d %v", code, out)
+	}
+}
+
 func TestListingChangesFeed(t *testing.T) {
 	st := &memStore{rows: map[string]*search.Search{}, keys: map[string]string{"k-mm": "mertmetin"}}
 	fl := &fakeListings{}

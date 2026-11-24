@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -283,6 +284,28 @@ func (h *Hub) Changes(ctx context.Context, after int64, limit int, f Filter) ([]
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// Get returns one listing as the hub holds it now (found=false if never seen).
+// A listing that left the feed comes back with Present=false and no record.
+func (h *Hub) Get(ctx context.Context, key string) (Listing, bool, error) {
+	var l Listing
+	var rec, ph, rm []byte
+	err := h.Pool.QueryRow(ctx, `SELECT seq, listing_key, present, modified_at, CASE WHEN present THEN record END,
+		CASE WHEN present THEN photos END, CASE WHEN present THEN rooms END FROM hub_listings WHERE listing_key = $1`, key).
+		Scan(&l.Seq, &l.Key, &l.Present, &l.ModifiedAt, &rec, &ph, &rm)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Listing{}, false, nil
+	}
+	if err != nil {
+		return Listing{}, false, err
+	}
+	if rec != nil {
+		_ = json.Unmarshal(rec, &l.Record)
+		_ = json.Unmarshal(ph, &l.Photos)
+		_ = json.Unmarshal(rm, &l.Rooms)
+	}
+	return l, true, nil
 }
 
 // Stats for /metrics and status.

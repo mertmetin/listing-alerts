@@ -21,6 +21,7 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,7 @@ type Store interface {
 // Listings is the listing hub's changes feed (hub.Hub).
 type Listings interface {
 	Changes(ctx context.Context, after int64, limit int, f hub.Filter) ([]hub.Listing, error)
+	Get(ctx context.Context, key string) (hub.Listing, bool, error)
 }
 
 type Server struct {
@@ -87,6 +89,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.Handle("DELETE /v1/searches/{id}", s.auth("delete", s.remove))
 	if s.Hub != nil {
 		mux.Handle("GET /v1/listings/changes", s.auth("listing_changes", s.listingChanges))
+		mux.Handle("GET /v1/listings/{key}", s.auth("listing_get", s.listingGet))
 	}
 	if len(s.UnsubSecret) > 0 {
 		mux.HandleFunc("GET /v1/unsubscribe", s.unsubscribePage)
@@ -334,3 +337,25 @@ func (s *Server) remove(_ http.ResponseWriter, r *http.Request, site string) (in
 	}
 	return http.StatusNoContent, nil
 }
+
+// listingGet: GET /v1/listings/{key}
+//
+// One listing as the hub holds it now (full record, photos, rooms). For pages
+// that need a single listing's photos when the board's own API is slow or down.
+func (s *Server) listingGet(_ http.ResponseWriter, r *http.Request, _ string) (int, any) {
+	key := r.PathValue("key")
+	if !listingKeyRe.MatchString(key) {
+		return http.StatusBadRequest, errBody("invalid listing key")
+	}
+	l, found, err := s.Hub.Get(r.Context(), key)
+	if err != nil {
+		s.Log.Error("listing get", "err", err)
+		return http.StatusInternalServerError, errBody("internal error")
+	}
+	if !found {
+		return http.StatusNotFound, errBody("no such listing")
+	}
+	return http.StatusOK, l
+}
+
+var listingKeyRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,40}$`)
