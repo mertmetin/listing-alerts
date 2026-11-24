@@ -1,0 +1,178 @@
+# Production: one small VPS (2 cores, 4 GB). Same services as the dev stack,
+# one replica each, durable Redpanda (fsync on), nothing published except
+# Caddy on 80/443. Secrets come from /opt/listing-alerts/.env (never in git).
+#
+#   scripts/deploy.sh            (from the Mac: pull, build, restart)
+name: listing-alerts
+
+x-env: &env
+  POSTGRES_URL: postgres://alerts:${POSTGRES_PASSWORD:?missing}@postgres:5432/alerts?sslmode=disable
+  REDIS_ADDR: redis:6379
+  KAFKA_BROKERS: redpanda:9092
+  LOG_LEVEL: info
+
+x-app: &app
+  build:
+    context: ../..
+  restart: unless-stopped
+  mem_limit: 256m
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    init: { condition: service_completed_successfully }
+  logging: &logging
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v26.2.6
+    # Production mode: no --mode=dev-container, so writes are fsynced.
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=768M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --default-log-level=warn
+      - --kafka-addr=internal://0.0.0.0:9092
+      - --advertise-kafka-addr=internal://redpanda:9092
+      - --rpc-addr=redpanda:33145
+      - --advertise-rpc-addr=redpanda:33145
+    volumes: [redpanda:/var/lib/redpanda/data]
+    mem_limit: 1200m
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # Topics: 14-day retention and a size cap, so a burst can never fill the disk.
+  init:
+    image: redpandadata/redpanda:v26.2.6
+    depends_on:
+      redpanda: { condition: service_healthy }
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        rpk() { command rpk -X brokers=redpanda:9092 -X admin.hosts=redpanda:9644 "$$@"; }
+        for t in listing.changes listing.events alerts.pending; do
+          rpk topic create "$$t" -p 12 -r 1 -c retention.ms=1209600000 -c retention.bytes=268435456 || true
+        done
+        rpk topic create alerts.dlq -p 3 -r 1 -c retention.ms=2592000000 || true
+        rpk topic list
+    restart: "no"
+
+  postgres:
+    image: postgres:17-alpine
+    command: [postgres, -c, shared_buffers=128MB, -c, max_connections=60]
+    environment:
+      POSTGRES_USER: alerts
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing}
+      POSTGRES_DB: alerts
+    volumes: [postgres:/var/lib/postgresql/data]
+    mem_limit: 512m
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alerts -d alerts"]
+      interval: 5s
+      retries: 30
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb"]
+    volumes: [redis:/data]
+    mem_limit: 96m
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 30
+
+  poller-vow:
+    <<: *app
+    build: { context: ../.., args: { SERVICE: poller } }
+    environment:
+      <<: *env
+      SOURCE: vow
+      PROPTX_VOW_TOKEN: ${PROPTX_VOW_TOKEN:?missing}
+      RECORD_DIR: /data/recordings
+    volumes: [./data:/data]
+
+  poller-idx:
+    <<: *app
+    build: { context: ../.., args: { SERVICE: poller } }
+    environment:
+      <<: *env
+      SOURCE: idx
+      PROPTX_IDX_TOKEN: ${PROPTX_IDX_TOKEN:?missing}
+      RECORD_DIR: /data/recordings
+    volumes: [./data:/data]
+
+  detector:
+    <<: *app
+    build: { context: ../.., args: { SERVICE: detector } }
+    environment:
+      <<: *env
+      ADDRESS_POINTS_DB: /geo/address-points.db
+    volumes: [./data/geo:/geo:ro]
+    mem_limit: 384m
+
+  matcher:
+    <<: *app
+    build: { context: ../.., args: { SERVICE: matcher } }
+    environment: { <<: *env, SHARD_INDEX: "0", SHARD_COUNT: "1" }
+
+  api:
+    <<: *app
+    build: { context: ../.., args: { SERVICE: api } }
+    environment:
+      <<: *env
+      UNSUBSCRIBE_SECRET: ${UNSUBSCRIBE_SECRET:?missing}
+
+  # Until Gmail is configured, every email goes to Mailpit (shadow mode).
+  # View it over an SSH tunnel: ssh -L 8025:localhost:8025 <server>.
+  delivery:
+    <<: *app
+    build: { context: ../.., args: { SERVICE: delivery } }
+    environment:
+      <<: *env
+      UNSUBSCRIBE_SECRET: ${UNSUBSCRIBE_SECRET:?missing}
+      UNSUBSCRIBE_URL: https://alerts.mertmetin.ca/v1/unsubscribe
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Mert Metin <alerts@mertmetin.ca>}
+      SENDERS: "2"
+
+  mailpit:
+    image: axllent/mailpit:v1.33.1
+    environment:
+      MP_MAX_MESSAGES: "5000"
+    ports: ["127.0.0.1:8025:8025"] # local only: reach it through an SSH tunnel
+    volumes: [mailpit:/data]
+    mem_limit: 128m
+    restart: unless-stopped
+    logging: *logging
+
+  # HTTPS for the API at alerts.mertmetin.ca (Let's Encrypt). Started once the
+  # DNS record points here: docker compose --profile https up -d caddy
+  caddy:
+    image: caddy:2.10-alpine
+    profiles: ["https"]
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    mem_limit: 128m
+    restart: unless-stopped
+    logging: *logging
+
+volumes: { redpanda: {}, postgres: {}, redis: {}, mailpit: {}, caddy: {} }

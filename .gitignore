@@ -15,3 +15,4 @@ tokens.json
 /tmp/
 coverage.out
 .DS_Store
+/deploy/prod/data/

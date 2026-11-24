@@ -1,0 +1,17 @@
+# Public surface: the saved-search API and unsubscribe links only.
+# /metrics and /readyz stay internal.
+alerts.mertmetin.ca {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	@api path /v1/* /healthz
+	handle @api {
+		reverse_proxy api:8080
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
