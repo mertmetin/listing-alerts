@@ -15,6 +15,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/mertmetin/listing-alerts/internal/hub"
 	"github.com/mertmetin/listing-alerts/internal/search"
 	"github.com/mertmetin/listing-alerts/internal/unsub"
 )
@@ -247,5 +248,45 @@ func TestUnsubscribe(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 400 {
 		t.Fatalf("forged token: %d", resp.StatusCode)
+	}
+}
+
+type fakeListings struct {
+	got struct {
+		after int64
+		limit int
+		f     hub.Filter
+	}
+}
+
+func (f *fakeListings) Changes(_ context.Context, after int64, limit int, filt hub.Filter) ([]hub.Listing, error) {
+	f.got.after, f.got.limit, f.got.f = after, limit, filt
+	return []hub.Listing{{Seq: after + 1, Key: "X1", Present: true}, {Seq: after + 2, Key: "X2"}}, nil
+}
+
+func TestListingChangesFeed(t *testing.T) {
+	st := &memStore{rows: map[string]*search.Search{}, keys: map[string]string{"k-mm": "mertmetin"}}
+	fl := &fakeListings{}
+	s := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), prometheus.NewRegistry())
+	s.Hub = fl
+	mux := http.NewServeMux()
+	s.Routes(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	if code, _ := call(t, srv, "GET", "/v1/listings/changes", "", ""); code != 401 {
+		t.Fatalf("no key: %d", code)
+	}
+	code, out := call(t, srv, "GET", "/v1/listings/changes?after=40&limit=2&county=Ottawa&transaction=lease", "k-mm", "")
+	if code != 200 || out["next"].(float64) != 42 || out["more"] != true || len(out["listings"].([]any)) != 2 {
+		t.Fatalf("feed: %d %v", code, out)
+	}
+	if fl.got.after != 40 || fl.got.limit != 2 || fl.got.f.County != "Ottawa" || fl.got.f.Transaction != "For Lease" {
+		t.Fatalf("passed %+v", fl.got)
+	}
+	for _, bad := range []string{"after=-1", "limit=5000", "transaction=rent"} {
+		if code, _ := call(t, srv, "GET", "/v1/listings/changes?"+bad, "k-mm", ""); code != 400 {
+			t.Errorf("%s: %d, want 400", bad, code)
+		}
 	}
 }

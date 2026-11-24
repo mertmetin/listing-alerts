@@ -21,12 +21,14 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/mertmetin/listing-alerts/internal/hub"
 	"github.com/mertmetin/listing-alerts/internal/search"
 	"github.com/mertmetin/listing-alerts/internal/unsub"
 )
@@ -43,8 +45,15 @@ type Store interface {
 }
 
 // Server serves the API.
+// Listings is the listing hub's changes feed (hub.Hub).
+type Listings interface {
+	Changes(ctx context.Context, after int64, limit int, f hub.Filter) ([]hub.Listing, error)
+}
+
 type Server struct {
 	Store Store
+	// Hub serves /v1/listings/changes; nil disables it.
+	Hub Listings
 	// UnsubSecret signs unsubscribe links in emails (shared with delivery).
 	// Empty disables /v1/unsubscribe.
 	UnsubSecret []byte
@@ -76,6 +85,9 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.Handle("GET /v1/searches/{id}", s.auth("get", s.get))
 	mux.Handle("PUT /v1/searches/{id}", s.auth("update", s.update))
 	mux.Handle("DELETE /v1/searches/{id}", s.auth("delete", s.remove))
+	if s.Hub != nil {
+		mux.Handle("GET /v1/listings/changes", s.auth("listing_changes", s.listingChanges))
+	}
 	if len(s.UnsubSecret) > 0 {
 		mux.HandleFunc("GET /v1/unsubscribe", s.unsubscribePage)
 		mux.HandleFunc("POST /v1/unsubscribe", s.unsubscribe)
@@ -227,6 +239,45 @@ func (s *Server) create(_ http.ResponseWriter, r *http.Request, site string) (in
 		return http.StatusInternalServerError, errBody("internal error")
 	}
 	return http.StatusCreated, in
+}
+
+// listingChanges: GET /v1/listings/changes?after=<seq>&limit=<n>&county=Ottawa&transaction=sale|lease
+//
+// Listings (full IDX records with photos and rooms) changed after seq, oldest
+// first. Gone listings come with present=false and no record. Sites keep the
+// last seq they stored and ask again; "more" says another page is ready now.
+func (s *Server) listingChanges(_ http.ResponseWriter, r *http.Request, _ string) (int, any) {
+	q := r.URL.Query()
+	after, err := strconv.ParseInt(q.Get("after"), 10, 64)
+	if q.Get("after") != "" && (err != nil || after < 0) {
+		return http.StatusBadRequest, errBody("after must be a non-negative number")
+	}
+	limit := 500
+	if v := q.Get("limit"); v != "" {
+		if limit, err = strconv.Atoi(v); err != nil || limit < 1 || limit > 1000 {
+			return http.StatusBadRequest, errBody("limit must be 1 to 1000")
+		}
+	}
+	f := hub.Filter{County: q.Get("county")}
+	switch q.Get("transaction") {
+	case "", "all":
+	case "sale":
+		f.Transaction = "For Sale"
+	case "lease":
+		f.Transaction = "For Lease"
+	default:
+		return http.StatusBadRequest, errBody(`transaction must be "sale" or "lease"`)
+	}
+	rows, err := s.Hub.Changes(r.Context(), after, limit, f)
+	if err != nil {
+		s.Log.Error("listing changes", "err", err)
+		return http.StatusInternalServerError, errBody("internal error")
+	}
+	next := after
+	if n := len(rows); n > 0 {
+		next = rows[n-1].Seq
+	}
+	return http.StatusOK, map[string]any{"listings": rows, "next": next, "more": len(rows) == limit}
 }
 
 func (s *Server) list(_ http.ResponseWriter, r *http.Request, site string) (int, any) {

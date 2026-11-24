@@ -115,6 +115,9 @@ services:
       <<: *env
       SOURCE: idx
       PROPTX_IDX_TOKEN: ${PROPTX_IDX_TOKEN:?missing}
+      # Listing hub: full IDX records, photos and rooms for mertmetin.ca and
+      # hotrentals.ca (GET /v1/listings/changes).
+      HUB: "1"
       RECORD_DIR: /data/recordings
     volumes: [./data:/data]
 

@@ -24,6 +24,7 @@ import (
 	"github.com/mertmetin/listing-alerts/internal/db"
 	"github.com/mertmetin/listing-alerts/internal/event"
 	"github.com/mertmetin/listing-alerts/internal/health"
+	"github.com/mertmetin/listing-alerts/internal/hub"
 	"github.com/mertmetin/listing-alerts/internal/ingest"
 	"github.com/mertmetin/listing-alerts/internal/listing"
 	"github.com/mertmetin/listing-alerts/internal/platform"
@@ -96,13 +97,20 @@ func run() error {
 		if source == event.SourceIDX {
 			reconcile = duration("RECONCILE_EVERY", time.Hour)
 		}
+		fields := listing.RESOFields
+		var hb *hub.Hub
+		if source == event.SourceIDX && os.Getenv("HUB") == "1" {
+			// The listing hub for the public sites: full records, photos, rooms.
+			hb = &hub.Hub{Pool: deps.PG, Media: hub.PropTxMedia{Client: client}, Log: log.With("part", "hub")}
+			fields = union(listing.RESOFields, hub.Fields)
+		}
 		p := &ingest.Poller{
 			Source: source,
 			Feed: &reso.Source{
 				Client:         client,
 				Scope:          env("SCOPE_FILTER", defaultScope),
 				BaselineFilter: env("BASELINE_FILTER", defaultBaseline),
-				Select:         listing.RESOFields,
+				Select:         fields,
 				PageSize:       intEnv("PAGE_SIZE", 1000),
 				Overlap:        5 * time.Minute,
 			},
@@ -112,7 +120,28 @@ func run() error {
 			ReconcileEvery:  reconcile,
 			MinKeepFraction: 0.5,
 		}
-		loop = p.Run
+		if hb != nil {
+			p.Hub = hb
+			scope, filter := env("SCOPE_FILTER", defaultScope), env("BASELINE_FILTER", defaultBaseline)
+			loop = func(ctx context.Context) error {
+				// Fill the hub once before polling: one writer at a time keeps the
+				// feed's seq in commit order. Resumes where it stopped.
+				for ctx.Err() == nil {
+					if err := hb.Backfill(ctx, client, scope, filter, 500); err != nil {
+						log.Error("hub backfill failed, retrying", "err", err)
+						select {
+						case <-ctx.Done():
+						case <-time.After(30 * time.Second):
+						}
+						continue
+					}
+					break
+				}
+				return p.Run(ctx)
+			}
+		} else {
+			loop = p.Run
+		}
 	case event.SourceOffMLS:
 		var paths []string
 		for _, p := range strings.Split(os.Getenv("OFFMLS_FILES"), ",") {
@@ -182,4 +211,17 @@ func intEnv(k string, def int) int {
 		return n
 	}
 	return def
+}
+
+// union returns a's fields plus b's that a lacks, in order.
+func union(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range append(append([]string{}, a...), b...) {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/mertmetin/listing-alerts/internal/config"
 	"github.com/mertmetin/listing-alerts/internal/db"
 	"github.com/mertmetin/listing-alerts/internal/health"
+	"github.com/mertmetin/listing-alerts/internal/hub"
 	"github.com/mertmetin/listing-alerts/internal/platform"
 	"github.com/mertmetin/listing-alerts/internal/search"
 )
@@ -59,6 +60,7 @@ func run() error {
 	mux := platform.OpsMux(checks, reg)
 	srvAPI := api.New(search.Store{Pool: deps.PG}, log, reg)
 	srvAPI.UnsubSecret = []byte(os.Getenv("UNSUBSCRIBE_SECRET"))
+	srvAPI.Hub = &hub.Hub{Pool: deps.PG, Log: log}
 	if len(srvAPI.UnsubSecret) == 0 {
 		log.Warn("UNSUBSCRIBE_SECRET not set: /v1/unsubscribe disabled")
 	}

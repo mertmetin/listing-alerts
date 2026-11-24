@@ -38,6 +38,10 @@ type Poller struct {
 	// this fraction of the listings we hold, so a broken feed cannot "remove"
 	// everything.
 	MinKeepFraction float64
+	// Hub, when set (IDX poller only), also stores the full records for the
+	// public sites. It is written before the cursor commits, so a crash can't
+	// leave the hub behind the cursor.
+	Hub HubWriter
 
 	lastReconcile time.Time
 }
@@ -87,6 +91,13 @@ func (p *Poller) Step(ctx context.Context) (more bool, err error) {
 	if err := p.Pub.Publish(ctx, changes); err != nil {
 		return false, fmt.Errorf("publish: %w", err)
 	}
+	if p.Hub != nil {
+		if n, err := p.Hub.Apply(ctx, rows); err != nil {
+			return false, fmt.Errorf("hub: %w", err)
+		} else if n > 0 {
+			p.Log.Info("hub", "changed", n)
+		}
+	}
 	if err := p.Store.Commit(ctx, p.Source, &page.Next, snaps); err != nil {
 		return false, fmt.Errorf("commit: %w", err)
 	}
@@ -118,6 +129,12 @@ func (p *Poller) parse(rows []map[string]any) ([]listing.Listing, int) {
 	return out, invalid
 }
 
+// HubWriter is what the poller needs from hub.Hub.
+type HubWriter interface {
+	Apply(ctx context.Context, rows []map[string]any) (int, error)
+	Remove(ctx context.Context, keys []string) (int, error)
+}
+
 // Reconcile emits Removed for listings we hold that the feed no longer has.
 func (p *Poller) Reconcile(ctx context.Context) (int, error) {
 	now := p.Now()
@@ -137,6 +154,15 @@ func (p *Poller) Reconcile(ctx context.Context) (int, error) {
 		keep[k] = true
 	}
 	changes, snaps := Removals(p.Source, present, keep, now)
+	if p.Hub != nil && len(changes) > 0 {
+		gone := make([]string, len(changes))
+		for i, c := range changes {
+			gone[i] = c.ListingKey
+		}
+		if _, err := p.Hub.Remove(ctx, gone); err != nil {
+			return 0, fmt.Errorf("hub removals: %w", err)
+		}
+	}
 	if err := p.Pub.Publish(ctx, changes); err != nil {
 		return 0, fmt.Errorf("publish removals: %w", err)
 	}
