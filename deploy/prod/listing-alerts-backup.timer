@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the listing-alerts Postgres backup nightly
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 America/Toronto
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

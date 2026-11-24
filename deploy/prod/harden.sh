@@ -27,8 +27,15 @@ sshd -T | grep -E '^(passwordauthentication|permitrootlogin|kbdinteractiveauthen
 
 echo "== firewall: ssh, http, https"
 dnf -q -y install firewalld >/dev/null
+# Allow SSH in the saved config before the firewall starts, so enabling it
+# can never cut off the session running this script.
+if ! systemctl is-active -q firewalld; then
+  firewall-offline-cmd -q --add-service=ssh --add-service=http --add-service=https
+fi
 systemctl enable --now firewalld >/dev/null
 firewall-cmd -q --permanent --add-service=ssh --add-service=http --add-service=https
+# AlmaLinux opens the Cockpit web console (port 9090) by default; not used here.
+firewall-cmd -q --permanent --remove-service=cockpit 2>/dev/null || true
 firewall-cmd -q --reload
 firewall-cmd --list-services
 
@@ -43,6 +50,7 @@ bantime = 1h
 EOF
 systemctl enable --now fail2ban >/dev/null
 systemctl restart fail2ban
+for _ in 1 2 3 4 5 6 7 8 9 10; do fail2ban-client ping >/dev/null 2>&1 && break; sleep 1; done
 fail2ban-client status sshd | grep -E 'Currently|Total' || true
 
 echo "== automatic security updates"
@@ -55,7 +63,7 @@ echo "== swap"
 if ! swapon --show | grep -q /swapfile; then
   fallocate -l 2G /swapfile
   chmod 600 /swapfile
-  mkswap -q /swapfile
+  mkswap /swapfile >/dev/null
   swapon /swapfile
   grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
 fi

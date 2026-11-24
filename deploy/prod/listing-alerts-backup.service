@@ -1,0 +1,8 @@
+[Unit]
+Description=listing-alerts nightly Postgres backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/listing-alerts/deploy/prod/backup.sh
