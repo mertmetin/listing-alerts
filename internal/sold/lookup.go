@@ -248,13 +248,13 @@ func (h Homes) Neighbours(ctx context.Context, a Address, limit int) ([]Neighbou
 	}
 	first := strings.ToUpper(strings.Fields(core)[0])
 	rows, err := h.Pool.Query(ctx, `
-		SELECT DISTINCT ON (addr) num, street, record FROM (
+		SELECT DISTINCT ON (addr) num, unit, street, record FROM (
 			SELECT record->>'StreetNumber' || ' ' || coalesce(record->>'UnitNumber', '') AS addr, record->>'StreetNumber' AS num,
-			       record->>'StreetName' AS street, record, modified_at AS at
+			       coalesce(record->>'UnitNumber', '') AS unit, record->>'StreetName' AS street, record, modified_at AS at
 			  FROM sold_listings WHERE county = $1 AND upper(record->>'StreetName') LIKE $2
 			UNION ALL
 			SELECT record->>'StreetNumber' || ' ' || coalesce(record->>'UnitNumber', ''), record->>'StreetNumber',
-			       record->>'StreetName', record, modified_at
+			       coalesce(record->>'UnitNumber', ''), record->>'StreetName', record, modified_at
 			  FROM hub_listings WHERE present AND county = $1 AND transaction = 'For Sale' AND upper(record->>'StreetName') LIKE $2
 		) x ORDER BY addr, at DESC`, h.County, "%"+first+"%")
 	if err != nil {
@@ -262,18 +262,24 @@ func (h Homes) Neighbours(ctx context.Context, a Address, limit int) ([]Neighbou
 	}
 	defer rows.Close()
 	var out []Neighbour
+	myUnit := normUnit(a.Unit)
 	for rows.Next() {
-		var n, street string
+		var n, unit, street string
 		var raw []byte
-		if err := rows.Scan(&n, &street, &raw); err != nil {
+		if err := rows.Scan(&n, &unit, &street, &raw); err != nil {
 			return nil, err
 		}
 		if geocode.StreetCore(street) != core {
 			continue
 		}
 		v, err := strconv.Atoi(strings.TrimLeft(strings.TrimSpace(n), "0"))
-		if err != nil || v == num {
-			continue // the address itself never counts
+		if err != nil {
+			continue
+		}
+		// The address itself never counts. For a unit, that's just the unit:
+		// the rest of the building (gap 0) is the best comparison there is.
+		if v == num && (myUnit == "" || normUnit(unit) == myUnit) {
+			continue
 		}
 		var rec map[string]any
 		if json.Unmarshal(raw, &rec) != nil {

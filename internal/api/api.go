@@ -423,7 +423,7 @@ func (s *Server) homeStreetMix(_ http.ResponseWriter, r *http.Request, site stri
 	return http.StatusOK, map[string]any{"mix": mix}
 }
 
-// homeNeighbours: GET /v1/homes/neighbours?number=12&street=Main%20St&limit=40
+// homeNeighbours: GET /v1/homes/neighbours?number=12&street=Main%20St&unit=4&limit=40
 //
 // Facts of the nearest homes on the same street (no addresses, no prices),
 // nearest first, the address itself left out: {"homes": [{"gap": 2, "facts": {...}}]}.
@@ -433,8 +433,8 @@ func (s *Server) homeNeighbours(_ http.ResponseWriter, r *http.Request, site str
 		return http.StatusForbidden, errBody("home lookups are for VOW sites only")
 	}
 	q := r.URL.Query()
-	a := sold.Address{Number: strings.TrimSpace(q.Get("number")), Street: strings.TrimSpace(q.Get("street"))}
-	if a.Number == "" || a.Street == "" || len(a.Number) > 12 || len(a.Street) > 80 {
+	a := sold.Address{Number: strings.TrimSpace(q.Get("number")), Street: strings.TrimSpace(q.Get("street")), Unit: strings.TrimSpace(q.Get("unit"))}
+	if a.Number == "" || a.Street == "" || len(a.Number) > 12 || len(a.Street) > 80 || len(a.Unit) > 12 {
 		return http.StatusBadRequest, errBody("number and street are required")
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))

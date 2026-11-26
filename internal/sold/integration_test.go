@@ -217,3 +217,30 @@ func TestNeighbours(t *testing.T) {
 		}
 	}
 }
+
+func TestNeighboursSameBuilding(t *testing.T) {
+	ctx := context.Background()
+	pool := isolated(t)
+	add := func(key, num, unit string) {
+		b, _ := json.Marshal(map[string]any{"StreetNumber": num, "UnitNumber": unit, "StreetName": "Queen St", "PropertySubType": "Condo Apartment"})
+		if _, err := pool.Exec(ctx, `INSERT INTO sold_listings (listing_key, county, modified_at, record) VALUES ($1, 'Ottawa', now(), $2)`, key, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("U1", "300", "1204") // the visitor's own unit
+	add("U2", "300", "805")
+	add("U3", "300", "1501")
+	add("U4", "310", "2")
+	h := Homes{Pool: pool, County: "Ottawa"}
+	homes, err := h.Neighbours(ctx, Address{Number: "300", Street: "Queen Street", Unit: "#1204"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(homes) != 3 || homes[0].Gap != 0 || homes[1].Gap != 0 || homes[2].Gap != 10 {
+		t.Fatalf("want the building's other units first, own unit left out: %+v", homes)
+	}
+	// Without a unit the whole building is "the address" and is left out.
+	if homes, _ := h.Neighbours(ctx, Address{Number: "300", Street: "Queen Street"}, 10); len(homes) != 1 {
+		t.Fatalf("no unit: %+v", homes)
+	}
+}
