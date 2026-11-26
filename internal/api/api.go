@@ -57,6 +57,7 @@ type Listings interface {
 type Homes interface {
 	Lookup(ctx context.Context, a sold.Address) (*sold.Home, error)
 	StreetMix(ctx context.Context, a sold.Address) (*sold.StreetMix, error)
+	Neighbours(ctx context.Context, a sold.Address, limit int) ([]sold.Neighbour, error)
 }
 
 type Server struct {
@@ -106,6 +107,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	if s.Homes != nil {
 		mux.Handle("GET /v1/homes/lookup", s.auth("home_lookup", s.homeLookup))
 		mux.Handle("GET /v1/homes/street-mix", s.auth("home_street_mix", s.homeStreetMix))
+		mux.Handle("GET /v1/homes/neighbours", s.auth("home_neighbours", s.homeNeighbours))
 	}
 	if len(s.UnsubSecret) > 0 {
 		mux.HandleFunc("GET /v1/unsubscribe", s.unsubscribePage)
@@ -419,4 +421,30 @@ func (s *Server) homeStreetMix(_ http.ResponseWriter, r *http.Request, site stri
 		return http.StatusInternalServerError, errBody("internal error")
 	}
 	return http.StatusOK, map[string]any{"mix": mix}
+}
+
+// homeNeighbours: GET /v1/homes/neighbours?number=12&street=Main%20St&limit=40
+//
+// Facts of the nearest homes on the same street (no addresses, no prices),
+// nearest first, the address itself left out: {"homes": [{"gap": 2, "facts": {...}}]}.
+// For a VOW site's server to guess a visitor's answers from aggregates.
+func (s *Server) homeNeighbours(_ http.ResponseWriter, r *http.Request, site string) (int, any) {
+	if !s.VOWSites[site] {
+		return http.StatusForbidden, errBody("home lookups are for VOW sites only")
+	}
+	q := r.URL.Query()
+	a := sold.Address{Number: strings.TrimSpace(q.Get("number")), Street: strings.TrimSpace(q.Get("street"))}
+	if a.Number == "" || a.Street == "" || len(a.Number) > 12 || len(a.Street) > 80 {
+		return http.StatusBadRequest, errBody("number and street are required")
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	homes, err := s.Homes.Neighbours(r.Context(), a, limit)
+	if err != nil {
+		s.Log.Error("neighbours", "err", err)
+		return http.StatusInternalServerError, errBody("internal error")
+	}
+	if homes == nil {
+		homes = []sold.Neighbour{}
+	}
+	return http.StatusOK, map[string]any{"homes": homes}
 }

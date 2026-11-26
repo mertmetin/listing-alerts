@@ -151,7 +151,14 @@ func TestStreetMix(t *testing.T) {
 	ctx := context.Background()
 	pool := isolated(t)
 	add := func(key, num, street, typ string) {
-		b, _ := json.Marshal(map[string]any{"StreetNumber": num, "StreetName": street, "PropertySubType": typ})
+		rec := map[string]any{"StreetNumber": num, "StreetName": street, "PropertySubType": typ}
+		if num == "14" || num == "16" || num == "900" {
+			rec["ApproximateAge"] = "16-30"
+		}
+		if num == "20" {
+			rec["ApproximateAge"] = "100+" // the address itself: never counted
+		}
+		b, _ := json.Marshal(rec)
 		if _, err := pool.Exec(ctx, `INSERT INTO sold_listings (listing_key, county, modified_at, record) VALUES ($1, 'Ottawa', now(), $2)`, key, b); err != nil {
 			t.Fatal(err)
 		}
@@ -170,5 +177,43 @@ func TestStreetMix(t *testing.T) {
 	}
 	if mix.N != 8 || mix.Types["Detached"] != 6 || mix.Types["Semi-Detached"] != 1 || mix.Types["Condo Apartment"] != 0 {
 		t.Fatalf("mix = %+v", mix)
+	}
+	// Ages look along the whole street (900 is far, but has an age), never the address itself.
+	if mix.AgeN != 3 || mix.Ages["16-30"] != 3 || mix.Ages["100+"] != 0 {
+		t.Fatalf("ages = %+v", mix)
+	}
+}
+
+func TestNeighbours(t *testing.T) {
+	ctx := context.Background()
+	pool := isolated(t)
+	add := func(key, num, unit, street string, price float64) {
+		b, _ := json.Marshal(map[string]any{"StreetNumber": num, "UnitNumber": unit, "StreetName": street, "PropertySubType": "Detached",
+			"LivingAreaRange": "1500-2000", "ClosePrice": price, "ListPrice": price, "PublicRemarks": "Lovely"})
+		if _, err := pool.Exec(ctx, `INSERT INTO sold_listings (listing_key, county, close_price, modified_at, record) VALUES ($1, 'Ottawa', $2, now(), $3)`, key, price, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("N0", "20", "", "Elm St", 1)
+	add("N1", "26", "", "Elm St", 600000)
+	add("N2", "18", "", "ELM", 610000)
+	add("N3", "40", "", "Elm Street", 620000)
+	add("N4", "22", "", "Elmwood Ave", 630000)
+	homes, err := Homes{Pool: pool, County: "Ottawa"}.Neighbours(ctx, Address{Number: "20", Street: "Elm Street"}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(homes) != 2 || homes[0].Gap != 2 || homes[1].Gap != 6 {
+		t.Fatalf("not the two nearest, nearest first: %+v", homes)
+	}
+	for _, h := range homes {
+		for _, banned := range []string{"ClosePrice", "ListPrice", "StreetNumber", "UnitNumber", "StreetName", "PublicRemarks"} {
+			if _, ok := h.Facts[banned]; ok {
+				t.Fatalf("neighbour lookup leaked %s", banned)
+			}
+		}
+		if h.Facts["LivingAreaRange"] != "1500-2000" {
+			t.Fatalf("facts missing: %+v", h)
+		}
 	}
 }
