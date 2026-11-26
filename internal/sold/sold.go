@@ -29,7 +29,10 @@ import (
 // Fields is what the archive downloads: everything the hub stores (the
 // property description) plus the sale itself.
 var Fields = append(append([]string{}, hub.Fields...),
-	"ClosePrice", "CloseDate", "PurchaseContractDate", "Latitude", "Longitude")
+	"ClosePrice", "CloseDate", "PurchaseContractDate", "Latitude", "Longitude",
+	// Valuation extras the public sites don't display.
+	"FoundationDetails", "HeatSource", "CoveredSpaces", "GarageYN", "ParkingFeatures", "KitchensTotal",
+	"RoomsAboveGrade", "DenFamilyroomYN", "CentralVacuumYN", "LotSizeArea", "LotSizeSource")
 
 // ClosedForSale limits the feed to closed sales. Closed covers Sold and the
 // rare Deal Fell Through after closing; mls_status tells them apart.
@@ -109,7 +112,8 @@ func (a *Archive) Prepare(rows []map[string]any) []Row {
 }
 
 // Commit upserts rows and saves the cursor in one transaction. An older
-// version never replaces a newer one, so overlap re-reads are harmless.
+// version never replaces a newer one, so overlap re-reads are harmless; an
+// equal one does, so a re-run with more fields refreshes every record.
 func (a *Archive) Commit(ctx context.Context, rows []Row, cur reso.Cursor) (int, error) {
 	c, err := json.Marshal(cur)
 	if err != nil {
@@ -132,7 +136,7 @@ func (a *Archive) Commit(ctx context.Context, rows []Row, cur reso.Cursor) (int,
 					modified_at = EXCLUDED.modified_at, record = EXCLUDED.record,
 					lat = COALESCE(EXCLUDED.lat, sold_listings.lat), lng = COALESCE(EXCLUDED.lng, sold_listings.lng),
 					geo_precision = COALESCE(EXCLUDED.geo_precision, sold_listings.geo_precision), updated_at = now()
-				WHERE sold_listings.modified_at < EXCLUDED.modified_at`,
+				WHERE sold_listings.modified_at <= EXCLUDED.modified_at`,
 				r.Key, r.County, r.MlsStatus, r.SubType, r.ClosePrice, r.CloseDate, r.ContractDate,
 				r.ModifiedAt, rec, r.Lat, r.Lng, nullable(r.Precision))
 			if err != nil {

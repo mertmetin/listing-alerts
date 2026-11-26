@@ -29,7 +29,7 @@ func TestSince(t *testing.T) {
 
 func TestFieldsIncludeSaleAndHubFields(t *testing.T) {
 	joined := "," + strings.Join(Fields, ",") + ","
-	for _, f := range []string{"ClosePrice", "CloseDate", "PurchaseContractDate", "LivingAreaRange", "TaxAnnualAmount", "AssociationFee", "ApproximateAge"} {
+	for _, f := range []string{"ClosePrice", "CloseDate", "PurchaseContractDate", "LivingAreaRange", "TaxAnnualAmount", "AssociationFee", "ApproximateAge", "FoundationDetails", "HeatSource", "CoveredSpaces"} {
 		if !strings.Contains(joined, ","+f+",") {
 			t.Errorf("Fields lacks %s", f)
 		}
