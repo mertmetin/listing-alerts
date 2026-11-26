@@ -4,6 +4,7 @@ package sold
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -99,5 +100,49 @@ func TestStepStoresAndNeverGoesBackwards(t *testing.T) {
 	pool.QueryRow(ctx, `SELECT contract_date::text FROM sold_listings WHERE listing_key = 'X1'`).Scan(&contract)
 	if contract != "2025-05-01" {
 		t.Fatalf("contract_date = %q", contract)
+	}
+}
+
+func TestLookup(t *testing.T) {
+	ctx := context.Background()
+	pool := isolated(t)
+	ins := func(key, county, num, street, unit, date string, price float64, extra map[string]any) {
+		rec := map[string]any{"StreetNumber": num, "StreetName": street, "UnitNumber": unit, "PropertySubType": "Detached",
+			"BedroomsAboveGrade": 3.0, "ClosePrice": price, "ListPrice": price}
+		for k, v := range extra {
+			rec[k] = v
+		}
+		b, _ := json.Marshal(rec)
+		if _, err := pool.Exec(ctx, `INSERT INTO sold_listings (listing_key, county, close_price, contract_date, modified_at, record)
+			VALUES ($1, $2, $3, $4::date, now(), $5)`, key, county, price, date, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ins("A1", "Ottawa", "12", "Maple Ave", "", "2025-01-10", 600000, map[string]any{"FoundationDetails": []any{"Poured Concrete"}})
+	ins("A2", "Ottawa", "12", "MAPLE", "", "2026-05-02", 690000, map[string]any{"BedroomsAboveGrade": 4.0})
+	ins("B1", "Ottawa", "300", "Queen St", "1204", "2025-06-01", 450000, nil)
+	ins("B2", "Ottawa", "300", "Queen St", "805", "2025-08-01", 410000, nil)
+	ins("C1", "Toronto", "12", "Maple Ave", "", "2026-06-01", 999000, nil)
+
+	h, err := Lookup(ctx, pool, "Ottawa", Address{Number: "12", Street: "Maple Avenue"})
+	if err != nil || h == nil {
+		t.Fatalf("lookup: %v %v", h, err)
+	}
+	if h.Key != "A2" || h.Date != "2026-05" || h.Facts["BedroomsAboveGrade"] != 4.0 {
+		t.Fatalf("not the newest Ottawa record: %+v", h)
+	}
+	for _, banned := range []string{"ClosePrice", "ListPrice"} {
+		if _, ok := h.Facts[banned]; ok {
+			t.Fatalf("lookup leaked %s", banned)
+		}
+	}
+	if h, _ := Lookup(ctx, pool, "Ottawa", Address{Number: "300", Street: "Queen Street"}); h != nil {
+		t.Fatalf("guessed a unit in a multi-unit building: %+v", h)
+	}
+	if h, _ := Lookup(ctx, pool, "Ottawa", Address{Number: "300", Street: "Queen", Unit: "#805"}); h == nil || h.Key != "B2" {
+		t.Fatalf("unit match: %+v", h)
+	}
+	if h, _ := Lookup(ctx, pool, "Ottawa", Address{Number: "13", Street: "Maple Ave"}); h != nil {
+		t.Fatalf("wrong number matched: %+v", h)
 	}
 }

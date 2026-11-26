@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/mertmetin/listing-alerts/internal/hub"
 	"github.com/mertmetin/listing-alerts/internal/platform"
 	"github.com/mertmetin/listing-alerts/internal/search"
+	"github.com/mertmetin/listing-alerts/internal/sold"
 )
 
 func main() {
@@ -61,6 +63,13 @@ func run() error {
 	srvAPI := api.New(search.Store{Pool: deps.PG}, log, reg)
 	srvAPI.UnsubSecret = []byte(os.Getenv("UNSUBSCRIBE_SECRET"))
 	srvAPI.Hub = &hub.Hub{Pool: deps.PG, Log: log}
+	srvAPI.Homes = sold.Homes{Pool: deps.PG, County: env("HOMES_COUNTY", "Ottawa")}
+	srvAPI.VOWSites = map[string]bool{}
+	for _, site := range strings.Split(env("VOW_SITES", "mertmetin"), ",") {
+		if site = strings.TrimSpace(site); site != "" {
+			srvAPI.VOWSites[site] = true
+		}
+	}
 	if len(srvAPI.UnsubSecret) == 0 {
 		log.Warn("UNSUBSCRIBE_SECRET not set: /v1/unsubscribe disabled")
 	}
@@ -77,4 +86,11 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+func env(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }

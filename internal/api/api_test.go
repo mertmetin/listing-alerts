@@ -17,6 +17,7 @@ import (
 
 	"github.com/mertmetin/listing-alerts/internal/hub"
 	"github.com/mertmetin/listing-alerts/internal/search"
+	"github.com/mertmetin/listing-alerts/internal/sold"
 	"github.com/mertmetin/listing-alerts/internal/unsub"
 )
 
@@ -323,5 +324,45 @@ func TestListingChangesFeed(t *testing.T) {
 		if code, _ := call(t, srv, "GET", "/v1/listings/changes?"+bad, "k-mm", ""); code != 400 {
 			t.Errorf("%s: %d, want 400", bad, code)
 		}
+	}
+}
+
+type fakeHomes struct{ got sold.Address }
+
+func (f *fakeHomes) Lookup(_ context.Context, a sold.Address) (*sold.Home, error) {
+	f.got = a
+	if a.Number == "12" {
+		return &sold.Home{Key: "X1", Source: "sold", Date: "2025-03", Facts: map[string]any{"PropertySubType": "Detached"}}, nil
+	}
+	return nil, nil
+}
+
+func TestHomeLookupVOWOnly(t *testing.T) {
+	st := &memStore{rows: map[string]*search.Search{}, keys: map[string]string{"k-mm": "mertmetin", "k-hr": "hotrentals"}}
+	s := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), prometheus.NewRegistry())
+	homes := &fakeHomes{}
+	s.Homes = homes
+	s.VOWSites = map[string]bool{"mertmetin": true}
+	mux := http.NewServeMux()
+	s.Routes(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	if code, _ := call(t, srv, "GET", "/v1/homes/lookup?number=12&street=Main", "", ""); code != 401 {
+		t.Fatalf("no key: %d", code)
+	}
+	if code, _ := call(t, srv, "GET", "/v1/homes/lookup?number=12&street=Main", "k-hr", ""); code != 403 {
+		t.Fatalf("IDX-only site got VOW data: %d", code)
+	}
+	if code, _ := call(t, srv, "GET", "/v1/homes/lookup?street=Main", "k-mm", ""); code != 400 {
+		t.Fatalf("missing number: %d", code)
+	}
+	code, out := call(t, srv, "GET", "/v1/homes/lookup?number=12&street=Main%20St&unit=%204", "k-mm", "")
+	home, _ := out["home"].(map[string]any)
+	if code != 200 || home["key"] != "X1" || homes.got.Unit != "4" || homes.got.Street != "Main St" {
+		t.Fatalf("lookup: %d %v %+v", code, out, homes.got)
+	}
+	if code, out := call(t, srv, "GET", "/v1/homes/lookup?number=99&street=Main", "k-mm", ""); code != 200 || out["home"] != nil {
+		t.Fatalf("no match: %d %v", code, out)
 	}
 }

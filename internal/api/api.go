@@ -31,6 +31,7 @@ import (
 
 	"github.com/mertmetin/listing-alerts/internal/hub"
 	"github.com/mertmetin/listing-alerts/internal/search"
+	"github.com/mertmetin/listing-alerts/internal/sold"
 	"github.com/mertmetin/listing-alerts/internal/unsub"
 )
 
@@ -52,8 +53,18 @@ type Listings interface {
 	Get(ctx context.Context, key string) (hub.Listing, bool, error)
 }
 
+// Homes looks up an address's newest MLS record (sold.Homes).
+type Homes interface {
+	Lookup(ctx context.Context, a sold.Address) (*sold.Home, error)
+}
+
 type Server struct {
 	Store Store
+	// Homes serves /v1/homes/lookup to the sites in VOWSites only: its
+	// records come from the VOW feed, which only a VOW site may show (and
+	// only to signed-in clients). nil disables it.
+	Homes    Homes
+	VOWSites map[string]bool
 	// Hub serves /v1/listings/changes; nil disables it.
 	Hub Listings
 	// UnsubSecret signs unsubscribe links in emails (shared with delivery).
@@ -90,6 +101,9 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	if s.Hub != nil {
 		mux.Handle("GET /v1/listings/changes", s.auth("listing_changes", s.listingChanges))
 		mux.Handle("GET /v1/listings/{key}", s.auth("listing_get", s.listingGet))
+	}
+	if s.Homes != nil {
+		mux.Handle("GET /v1/homes/lookup", s.auth("home_lookup", s.homeLookup))
 	}
 	if len(s.UnsubSecret) > 0 {
 		mux.HandleFunc("GET /v1/unsubscribe", s.unsubscribePage)
@@ -359,3 +373,26 @@ func (s *Server) listingGet(_ http.ResponseWriter, r *http.Request, _ string) (i
 }
 
 var listingKeyRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,40}$`)
+
+// homeLookup: GET /v1/homes/lookup?number=12&street=Main%20St&unit=4
+//
+// What MLS knows about one address (type, rooms, size, age, systems...),
+// from its newest sold or listed record. Never prices. {"home": null} when
+// there's no match, or when a building has several units and no unit was
+// given.
+func (s *Server) homeLookup(_ http.ResponseWriter, r *http.Request, site string) (int, any) {
+	if !s.VOWSites[site] {
+		return http.StatusForbidden, errBody("home lookups are for VOW sites only")
+	}
+	q := r.URL.Query()
+	a := sold.Address{Number: strings.TrimSpace(q.Get("number")), Street: strings.TrimSpace(q.Get("street")), Unit: strings.TrimSpace(q.Get("unit"))}
+	if a.Number == "" || a.Street == "" || len(a.Number) > 12 || len(a.Street) > 80 || len(a.Unit) > 12 {
+		return http.StatusBadRequest, errBody("number and street are required")
+	}
+	h, err := s.Homes.Lookup(r.Context(), a)
+	if err != nil {
+		s.Log.Error("home lookup", "err", err)
+		return http.StatusInternalServerError, errBody("internal error")
+	}
+	return http.StatusOK, map[string]any{"home": h}
+}
