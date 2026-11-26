@@ -119,6 +119,21 @@ services:
       HUB: "1"
     volumes: [./data:/data]
 
+  # Sold archive for home-value research: Ottawa closed sales since 2021 with
+  # full records, then new sales every 15 minutes. Writes sold_listings only
+  # (no events). The VOW data stays in this database.
+  sold-archive:
+    <<: *app
+    entrypoint: ["/poller"]
+    environment:
+      <<: *env
+      SOURCE: sold
+      PROPTX_VOW_TOKEN: ${PROPTX_VOW_TOKEN:?missing}
+      SOLD_SINCE: "2021-01-01"
+      ADDRESS_POINTS_DB: /geo/address-points.db
+    volumes: [./data/geo:/geo:ro]
+    mem_limit: 256m
+
   detector:
     <<: *app
     entrypoint: ["/detector"]

@@ -3,6 +3,8 @@
 //	SOURCE=vow     PropTx VOW (PROPTX_VOW_TOKEN): full lifecycle incl. sold and leased prices
 //	SOURCE=idx     PropTx IDX (PROPTX_IDX_TOKEN): what may be shown publicly; reconciled hourly
 //	SOURCE=offmls  hotrentals.ca off-MLS rental files (OFFMLS_FILES)
+//	SOURCE=sold    sold archive from the VOW feed (PROPTX_VOW_TOKEN): every closed
+//	               sale in SOLD_AREA since SOLD_SINCE, then new sales; no events
 //
 // Run one replica per source: a source's cursor has a single writer. Scaling
 // happens downstream, where listing.changes partitions fan out to workers.
@@ -23,6 +25,7 @@ import (
 	"github.com/mertmetin/listing-alerts/internal/config"
 	"github.com/mertmetin/listing-alerts/internal/db"
 	"github.com/mertmetin/listing-alerts/internal/event"
+	"github.com/mertmetin/listing-alerts/internal/geocode"
 	"github.com/mertmetin/listing-alerts/internal/health"
 	"github.com/mertmetin/listing-alerts/internal/hub"
 	"github.com/mertmetin/listing-alerts/internal/ingest"
@@ -30,6 +33,7 @@ import (
 	"github.com/mertmetin/listing-alerts/internal/platform"
 	"github.com/mertmetin/listing-alerts/internal/recorder"
 	"github.com/mertmetin/listing-alerts/internal/reso"
+	"github.com/mertmetin/listing-alerts/internal/sold"
 )
 
 const (
@@ -142,6 +146,39 @@ func run() error {
 		} else {
 			loop = p.Run
 		}
+	case "sold":
+		token := os.Getenv("PROPTX_VOW_TOKEN")
+		if token == "" {
+			return errors.New("PROPTX_VOW_TOKEN is not set")
+		}
+		client := reso.New(env("RESO_URL", "https://query.ampre.ca/odata"), token)
+		if ua := os.Getenv("RESO_USER_AGENT"); ua != "" {
+			client.WithUserAgent(ua)
+		}
+		since, err := time.Parse("2006-01-02", env("SOLD_SINCE", "2021-01-01"))
+		if err != nil {
+			return fmt.Errorf("SOLD_SINCE: %w", err)
+		}
+		a := &sold.Archive{
+			Pool: deps.PG, Log: log, Now: time.Now, Interval: duration("POLL_INTERVAL", 15*time.Minute),
+			Feed: &reso.Source{
+				Client:         client,
+				Scope:          sold.Scope(env("SCOPE_FILTER", defaultScope), env("SOLD_AREA", "CountyOrParish eq 'Ottawa'")),
+				BaselineFilter: sold.Since(since),
+				Select:         sold.Fields,
+				PageSize:       intEnv("PAGE_SIZE", 500),
+				Overlap:        10 * time.Minute,
+			},
+		}
+		if path := os.Getenv("ADDRESS_POINTS_DB"); path != "" {
+			g, err := geocode.Open(path)
+			if err != nil {
+				return fmt.Errorf("geocoder: %w", err)
+			}
+			defer g.Close()
+			a.Geo = g
+		}
+		loop = a.Run
 	case event.SourceOffMLS:
 		var paths []string
 		for _, p := range strings.Split(os.Getenv("OFFMLS_FILES"), ",") {
@@ -158,7 +195,7 @@ func run() error {
 		}
 		loop = p.Run
 	default:
-		return fmt.Errorf("SOURCE must be vow, idx or offmls, got %q", source)
+		return fmt.Errorf("SOURCE must be vow, idx, offmls or sold, got %q", source)
 	}
 
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: platform.OpsMux(checks, reg), ReadHeaderTimeout: 5 * time.Second}
