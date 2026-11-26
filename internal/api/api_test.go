@@ -337,6 +337,11 @@ func (f *fakeHomes) Lookup(_ context.Context, a sold.Address) (*sold.Home, error
 	return nil, nil
 }
 
+func (f *fakeHomes) StreetMix(_ context.Context, a sold.Address) (*sold.StreetMix, error) {
+	f.got = a
+	return &sold.StreetMix{Types: map[string]int{"Detached": 9, "Semi-Detached": 1}, N: 10}, nil
+}
+
 func TestHomeLookupVOWOnly(t *testing.T) {
 	st := &memStore{rows: map[string]*search.Search{}, keys: map[string]string{"k-mm": "mertmetin", "k-hr": "hotrentals"}}
 	s := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), prometheus.NewRegistry())
@@ -364,5 +369,24 @@ func TestHomeLookupVOWOnly(t *testing.T) {
 	}
 	if code, out := call(t, srv, "GET", "/v1/homes/lookup?number=99&street=Main", "k-mm", ""); code != 200 || out["home"] != nil {
 		t.Fatalf("no match: %d %v", code, out)
+	}
+}
+
+func TestStreetMix(t *testing.T) {
+	st := &memStore{rows: map[string]*search.Search{}, keys: map[string]string{"k-mm": "mertmetin", "k-hr": "hotrentals"}}
+	s := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), prometheus.NewRegistry())
+	s.Homes = &fakeHomes{}
+	s.VOWSites = map[string]bool{"mertmetin": true}
+	mux := http.NewServeMux()
+	s.Routes(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	if code, _ := call(t, srv, "GET", "/v1/homes/street-mix?number=12&street=Main", "k-hr", ""); code != 403 {
+		t.Fatalf("IDX-only site: %d", code)
+	}
+	code, out := call(t, srv, "GET", "/v1/homes/street-mix?number=12&street=Main", "k-mm", "")
+	mix, _ := out["mix"].(map[string]any)
+	if code != 200 || mix["n"] != 10.0 {
+		t.Fatalf("mix: %d %v", code, out)
 	}
 }

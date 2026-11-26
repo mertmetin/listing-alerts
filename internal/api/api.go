@@ -56,6 +56,7 @@ type Listings interface {
 // Homes looks up an address's newest MLS record (sold.Homes).
 type Homes interface {
 	Lookup(ctx context.Context, a sold.Address) (*sold.Home, error)
+	StreetMix(ctx context.Context, a sold.Address) (*sold.StreetMix, error)
 }
 
 type Server struct {
@@ -104,6 +105,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	}
 	if s.Homes != nil {
 		mux.Handle("GET /v1/homes/lookup", s.auth("home_lookup", s.homeLookup))
+		mux.Handle("GET /v1/homes/street-mix", s.auth("home_street_mix", s.homeStreetMix))
 	}
 	if len(s.UnsubSecret) > 0 {
 		mux.HandleFunc("GET /v1/unsubscribe", s.unsubscribePage)
@@ -395,4 +397,26 @@ func (s *Server) homeLookup(_ http.ResponseWriter, r *http.Request, site string)
 		return http.StatusInternalServerError, errBody("internal error")
 	}
 	return http.StatusOK, map[string]any{"home": h}
+}
+
+// homeStreetMix: GET /v1/homes/street-mix?number=12&street=Main%20St
+//
+// Home types among the nearest homes on the same street, the address itself
+// left out: {"mix": {"types": {"Detached": 11, "Att/Row/Townhouse": 2}, "n": 13}}.
+// Lets a site guess a visitor's home type from the neighbours.
+func (s *Server) homeStreetMix(_ http.ResponseWriter, r *http.Request, site string) (int, any) {
+	if !s.VOWSites[site] {
+		return http.StatusForbidden, errBody("home lookups are for VOW sites only")
+	}
+	q := r.URL.Query()
+	a := sold.Address{Number: strings.TrimSpace(q.Get("number")), Street: strings.TrimSpace(q.Get("street"))}
+	if a.Number == "" || a.Street == "" || len(a.Number) > 12 || len(a.Street) > 80 {
+		return http.StatusBadRequest, errBody("number and street are required")
+	}
+	mix, err := s.Homes.StreetMix(r.Context(), a)
+	if err != nil {
+		s.Log.Error("street mix", "err", err)
+		return http.StatusInternalServerError, errBody("internal error")
+	}
+	return http.StatusOK, map[string]any{"mix": mix}
 }

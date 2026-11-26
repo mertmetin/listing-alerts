@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,4 +132,74 @@ type Homes struct {
 // Lookup implements api.Homes.
 func (h Homes) Lookup(ctx context.Context, a Address) (*Home, error) {
 	return Lookup(ctx, h.Pool, h.County, a)
+}
+
+// StreetMix counts home types among the nearest records on the same street
+// (sold in the archive or listed now), leaving out the address itself. It is
+// an aggregate of the neighbours, never one home's record, so a site can use
+// it to guess "most homes near you are townhouses" for anyone.
+type StreetMix struct {
+	Types map[string]int `json:"types"` // PropertySubType -> homes
+	N     int            `json:"n"`
+}
+
+// MixNearest is how many of the closest house numbers count.
+const MixNearest = 15
+
+func (h Homes) StreetMix(ctx context.Context, a Address) (*StreetMix, error) {
+	num, err := strconv.Atoi(strings.TrimLeft(strings.TrimSpace(a.Number), "0"))
+	core := geocode.StreetCore(a.Street)
+	if err != nil || core == "" {
+		return &StreetMix{Types: map[string]int{}}, nil
+	}
+	first := strings.ToUpper(strings.Fields(core)[0])
+	rows, err := h.Pool.Query(ctx, `
+		SELECT DISTINCT ON (addr) addr, num, street, type FROM (
+			SELECT record->>'StreetNumber' || ' ' || coalesce(record->>'UnitNumber', '') AS addr, record->>'StreetNumber' AS num,
+			       record->>'StreetName' AS street, coalesce(record->>'PropertySubType', '') AS type, modified_at AS at
+			  FROM sold_listings WHERE county = $1 AND upper(record->>'StreetName') LIKE $2
+			UNION ALL
+			SELECT record->>'StreetNumber' || ' ' || coalesce(record->>'UnitNumber', ''), record->>'StreetNumber',
+			       record->>'StreetName', coalesce(record->>'PropertySubType', ''), modified_at
+			  FROM hub_listings WHERE present AND county = $1 AND transaction = 'For Sale' AND upper(record->>'StreetName') LIKE $2
+		) x ORDER BY addr, at DESC`, h.County, "%"+first+"%")
+	if err != nil {
+		return nil, fmt.Errorf("street mix: %w", err)
+	}
+	defer rows.Close()
+	type near struct {
+		dist int
+		typ  string
+	}
+	var homes []near
+	for rows.Next() {
+		var addr, n, street, typ string
+		if err := rows.Scan(&addr, &n, &street, &typ); err != nil {
+			return nil, err
+		}
+		if geocode.StreetCore(street) != core || typ == "" {
+			continue
+		}
+		v, err := strconv.Atoi(strings.TrimLeft(strings.TrimSpace(n), "0"))
+		if err != nil || v == num {
+			continue // the address itself never counts
+		}
+		d := v - num
+		if d < 0 {
+			d = -d
+		}
+		homes = append(homes, near{d, strings.TrimSpace(typ)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(homes, func(i, j int) bool { return homes[i].dist < homes[j].dist })
+	if len(homes) > MixNearest {
+		homes = homes[:MixNearest]
+	}
+	mix := &StreetMix{Types: map[string]int{}, N: len(homes)}
+	for _, h := range homes {
+		mix.Types[h.typ]++
+	}
+	return mix, nil
 }

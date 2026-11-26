@@ -146,3 +146,29 @@ func TestLookup(t *testing.T) {
 		t.Fatalf("wrong number matched: %+v", h)
 	}
 }
+
+func TestStreetMix(t *testing.T) {
+	ctx := context.Background()
+	pool := isolated(t)
+	add := func(key, num, street, typ string) {
+		b, _ := json.Marshal(map[string]any{"StreetNumber": num, "StreetName": street, "PropertySubType": typ})
+		if _, err := pool.Exec(ctx, `INSERT INTO sold_listings (listing_key, county, modified_at, record) VALUES ($1, 'Ottawa', now(), $2)`, key, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("S0", "20", "Elm St", "Condo Apartment") // the visitor's own address: never counted
+	for i, n := range []string{"14", "16", "18", "22", "24", "26"} {
+		add(fmt.Sprintf("S%d", i+1), n, "ELM", "Detached")
+	}
+	add("S7", "28", "Elm Street", "Semi-Detached ")
+	add("S8", "900", "Elm St", "Att/Row/Townhouse")
+	add("S9", "21", "Elmwood Ave", "Condo Apartment") // other street, same first word
+	h := Homes{Pool: pool, County: "Ottawa"}
+	mix, err := h.StreetMix(ctx, Address{Number: "20", Street: "Elm Street"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mix.N != 8 || mix.Types["Detached"] != 6 || mix.Types["Semi-Detached"] != 1 || mix.Types["Condo Apartment"] != 0 {
+		t.Fatalf("mix = %+v", mix)
+	}
+}
