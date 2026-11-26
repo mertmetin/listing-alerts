@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -60,6 +61,11 @@ type Homes interface {
 	Neighbours(ctx context.Context, a sold.Address, limit int) ([]sold.Neighbour, error)
 }
 
+// Estimator values a home from a homeowner's answers (valuation.Client).
+type Estimator interface {
+	Estimate(ctx context.Context, answers json.RawMessage) (int, json.RawMessage, error)
+}
+
 type Server struct {
 	Store Store
 	// Homes serves /v1/homes/lookup to the sites in VOWSites only: its
@@ -67,6 +73,9 @@ type Server struct {
 	// only to signed-in clients). nil disables it.
 	Homes    Homes
 	VOWSites map[string]bool
+	// Estimator serves POST /v1/homes/estimate to VOW sites (the model is
+	// trained on sold data). nil disables it.
+	Estimator Estimator
 	// Hub serves /v1/listings/changes; nil disables it.
 	Hub Listings
 	// UnsubSecret signs unsubscribe links in emails (shared with delivery).
@@ -108,6 +117,9 @@ func (s *Server) Routes(mux *http.ServeMux) {
 		mux.Handle("GET /v1/homes/lookup", s.auth("home_lookup", s.homeLookup))
 		mux.Handle("GET /v1/homes/street-mix", s.auth("home_street_mix", s.homeStreetMix))
 		mux.Handle("GET /v1/homes/neighbours", s.auth("home_neighbours", s.homeNeighbours))
+	}
+	if s.Estimator != nil {
+		mux.Handle("POST /v1/homes/estimate", s.auth("home_estimate", s.homeEstimate))
 	}
 	if len(s.UnsubSecret) > 0 {
 		mux.HandleFunc("GET /v1/unsubscribe", s.unsubscribePage)
@@ -377,6 +389,31 @@ func (s *Server) listingGet(_ http.ResponseWriter, r *http.Request, _ string) (i
 }
 
 var listingKeyRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,40}$`)
+
+// homeEstimate: POST /v1/homes/estimate with a homeowner's answers
+// ({"property_type": "Townhome", "lat": 45.27, "lng": -75.74, "hv_sqft": ...}).
+//
+// The valuation service's answer, passed through: estimate, low, high,
+// model version, what each answer was worth. No sold prices or comps.
+func (s *Server) homeEstimate(_ http.ResponseWriter, r *http.Request, site string) (int, any) {
+	if !s.VOWSites[site] {
+		return http.StatusForbidden, errBody("estimates are for VOW sites only")
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil || !json.Valid(body) {
+		return http.StatusBadRequest, errBody("a JSON body is required")
+	}
+	code, out, err := s.Estimator.Estimate(r.Context(), body)
+	if err != nil {
+		s.Log.Error("home estimate", "err", err)
+		return http.StatusBadGateway, errBody("the valuation service is unavailable")
+	}
+	if code >= 500 {
+		s.Log.Error("home estimate", "status", code, "body", string(out))
+		return http.StatusBadGateway, errBody("the valuation service is unavailable")
+	}
+	return code, out
+}
 
 // homeLookup: GET /v1/homes/lookup?number=12&street=Main%20St&unit=4
 //

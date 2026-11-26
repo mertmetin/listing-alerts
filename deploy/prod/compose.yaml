@@ -154,6 +154,10 @@ services:
     environment:
       <<: *env
       UNSUBSCRIBE_SECRET: ${UNSUBSCRIBE_SECRET:?missing}
+      # The ottawa-home-value API (its own container on this network, run from
+      # /opt/ottawa-home-value). Empty key = estimates off.
+      VALUATION_URL: ${VALUATION_URL:-http://ohv-api:8000}
+      VALUATION_API_KEY: ${VALUATION_API_KEY:-}
 
   # Until Gmail is configured, every email goes to Mailpit (shadow mode).
   # View it over an SSH tunnel: ssh -L 8025:localhost:8025 <server>.

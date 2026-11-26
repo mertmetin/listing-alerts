@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -412,5 +413,50 @@ func TestNeighbours(t *testing.T) {
 	homes, _ := out["homes"].([]any)
 	if code != 200 || len(homes) != 1 {
 		t.Fatalf("neighbours: %d %v", code, out)
+	}
+}
+
+type fakeEstimator struct {
+	got  string
+	code int
+	err  error
+}
+
+func (f *fakeEstimator) Estimate(_ context.Context, answers json.RawMessage) (int, json.RawMessage, error) {
+	f.got = string(answers)
+	if f.err != nil {
+		return 0, nil, f.err
+	}
+	return f.code, json.RawMessage(`{"estimate":655000,"low":590000,"high":720000}`), nil
+}
+
+func TestHomeEstimate(t *testing.T) {
+	st := &memStore{rows: map[string]*search.Search{}, keys: map[string]string{"k-mm": "mertmetin", "k-hr": "hotrentals"}}
+	s := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), prometheus.NewRegistry())
+	est := &fakeEstimator{code: 200}
+	s.Estimator = est
+	s.VOWSites = map[string]bool{"mertmetin": true}
+	mux := http.NewServeMux()
+	s.Routes(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	body := `{"property_type":"Townhome","lat":45.27,"lng":-75.74}`
+	if code, _ := call(t, srv, "POST", "/v1/homes/estimate", "k-hr", body); code != 403 {
+		t.Fatalf("IDX-only site got an estimate: %d", code)
+	}
+	if code, _ := call(t, srv, "POST", "/v1/homes/estimate", "k-mm", "not json"); code != 400 {
+		t.Fatalf("bad body: %d", code)
+	}
+	code, out := call(t, srv, "POST", "/v1/homes/estimate", "k-mm", body)
+	if code != 200 || out["estimate"] != 655000.0 || est.got != body {
+		t.Fatalf("estimate: %d %v %q", code, out, est.got)
+	}
+	est.code = 422
+	if code, _ := call(t, srv, "POST", "/v1/homes/estimate", "k-mm", body); code != 422 {
+		t.Fatalf("validation errors pass through: %d", code)
+	}
+	est.err = errors.New("down")
+	if code, out := call(t, srv, "POST", "/v1/homes/estimate", "k-mm", body); code != 502 || out["error"] == nil {
+		t.Fatalf("service down: %d %v", code, out)
 	}
 }

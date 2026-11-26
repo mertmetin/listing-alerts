@@ -20,6 +20,7 @@ import (
 	"github.com/mertmetin/listing-alerts/internal/platform"
 	"github.com/mertmetin/listing-alerts/internal/search"
 	"github.com/mertmetin/listing-alerts/internal/sold"
+	"github.com/mertmetin/listing-alerts/internal/valuation"
 )
 
 func main() {
@@ -64,6 +65,9 @@ func run() error {
 	srvAPI.UnsubSecret = []byte(os.Getenv("UNSUBSCRIBE_SECRET"))
 	srvAPI.Hub = &hub.Hub{Pool: deps.PG, Log: log}
 	srvAPI.Homes = sold.Homes{Pool: deps.PG, County: env("HOMES_COUNTY", "Ottawa")}
+	if u := os.Getenv("VALUATION_URL"); u != "" {
+		srvAPI.Estimator = valuation.New(strings.TrimRight(u, "/"), os.Getenv("VALUATION_API_KEY"))
+	}
 	srvAPI.VOWSites = map[string]bool{}
 	for _, site := range strings.Split(env("VOW_SITES", "mertmetin"), ",") {
 		if site = strings.TrimSpace(site); site != "" {
