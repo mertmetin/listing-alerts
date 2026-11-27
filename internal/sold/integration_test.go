@@ -283,3 +283,49 @@ func TestOffMarketArchive(t *testing.T) {
 		t.Fatalf("cursor %+v %v", c, err)
 	}
 }
+
+func TestLookupUnsold(t *testing.T) {
+	ctx := context.Background()
+	pool := isolated(t)
+	sold := func(key, num, date string) {
+		b, _ := json.Marshal(map[string]any{"StreetNumber": num, "StreetName": "Prominence", "PropertySubType": "Att/Row/Townhouse",
+			"ClosePrice": 600000.0})
+		if _, err := pool.Exec(ctx, `INSERT INTO sold_listings (listing_key, county, close_price, contract_date, modified_at, record)
+			VALUES ($1, 'Ottawa', 600000, $2::date, now(), $3)`, key, date, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unsold := func(key, num, status string, price float64, off time.Time) {
+		b, _ := json.Marshal(map[string]any{"StreetNumber": num, "StreetName": "Prominence Way", "PropertySubType": "Att/Row/Townhouse",
+			"MlsStatus": status, "ListPrice": price, "BedroomsAboveGrade": 3.0})
+		if _, err := pool.Exec(ctx, `INSERT INTO offmarket_listings (listing_key, county, standard_status, mls_status, list_price,
+			off_market_date, modified_at, record) VALUES ($1, 'Ottawa', 'Expired', $2, $3, $4::date, now(), $5)`, key, status, price, off, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	// 560: expired four months ago, never sold since -> cap.
+	unsold("A1", "560", "Expired", 749000, now.AddDate(0, -4, 0))
+	unsold("A0", "560", "Terminated", 779000, now.AddDate(0, -9, 0))
+	// 562: terminated, then sold -> no cap.
+	unsold("B1", "562", "Terminated", 699000, now.AddDate(0, -6, 0))
+	sold("B2", "562", now.AddDate(0, -2, 0).Format("2006-01-02"))
+	// 564: expired 20 months ago -> too old.
+	unsold("C1", "564", "Expired", 650000, now.AddDate(0, -20, 0))
+	h, err := Lookup(ctx, pool, "Ottawa", Address{Number: "560", Street: "Prominence Way"})
+	if err != nil || h == nil || h.Unsold == nil {
+		t.Fatalf("560: %+v %v", h, err)
+	}
+	if h.Unsold.ListPrice != 749000 || h.Unsold.Status != "Expired" || h.Facts["BedroomsAboveGrade"] != 3.0 {
+		t.Fatalf("560 unsold: %+v", h.Unsold)
+	}
+	if h, _ := Lookup(ctx, pool, "Ottawa", Address{Number: "562", Street: "Prominence"}); h == nil || h.Unsold != nil || h.Source != "sold" {
+		t.Fatalf("562 sold after: %+v", h)
+	}
+	if h, _ := Lookup(ctx, pool, "Ottawa", Address{Number: "564", Street: "Prominence"}); h == nil || h.Unsold != nil {
+		t.Fatalf("564 too old: %+v", h)
+	}
+	if _, ok := h.Facts["ListPrice"]; ok {
+		t.Fatal("lookup facts leaked a price")
+	}
+}

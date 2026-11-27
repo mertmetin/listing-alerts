@@ -29,10 +29,24 @@ var FactFields = []string{
 // Home is the newest MLS record of one address.
 type Home struct {
 	Key    string         `json:"key"`
-	Source string         `json:"source"` // "sold" (archive) or "listed" (on the market now)
+	Source string         `json:"source"` // "sold" (archive), "listed" (on the market now) or "unsold" (came off unsold)
 	Date   string         `json:"date"`   // YYYY-MM of the sale or listing
 	Facts  map[string]any `json:"facts"`
+	// Unsold is the newest listing of this address that came off the market
+	// without selling in the last UnsoldWindow, when no sale came after it.
+	// The home didn't sell at that price, so a valuation shouldn't exceed it.
+	Unsold *Unsold `json:"unsold,omitempty"`
 }
+
+// Unsold is a listing that expired, was terminated or suspended.
+type Unsold struct {
+	ListPrice float64 `json:"list_price"`
+	Date      string  `json:"date"`   // YYYY-MM-DD it came off the market
+	Status    string  `json:"status"` // Expired, Terminated, Suspended
+}
+
+// UnsoldWindow is how far back an unsold listing still caps a valuation.
+const UnsoldWindow = 365 * 24 * time.Hour
 
 // Address is what a visitor typed, split up.
 type Address struct {
@@ -65,7 +79,10 @@ func Lookup(ctx context.Context, pool *pgxpool.Pool, county string, a Address) (
 		  FROM sold_listings WHERE county = $1 AND record->>'StreetNumber' = $2
 		UNION ALL
 		SELECT listing_key, 'listed', modified_at, record
-		  FROM hub_listings WHERE present AND county = $1 AND transaction = 'For Sale' AND record->>'StreetNumber' = $2`,
+		  FROM hub_listings WHERE present AND county = $1 AND transaction = 'For Sale' AND record->>'StreetNumber' = $2
+		UNION ALL
+		SELECT listing_key, 'unsold', coalesce(off_market_date::timestamptz, modified_at), record
+		  FROM offmarket_listings WHERE county = $1 AND record->>'StreetNumber' = $2`,
 		county, num)
 	if err != nil {
 		return nil, fmt.Errorf("lookup: %w", err)
@@ -120,7 +137,31 @@ func Lookup(ctx context.Context, pool *pgxpool.Pool, county string, a Address) (
 			facts[f] = v
 		}
 	}
-	return &Home{Key: best.key, Source: best.source, Date: best.at.Format("2006-01"), Facts: facts}, nil
+	return &Home{Key: best.key, Source: best.source, Date: best.at.Format("2006-01"), Facts: facts,
+		Unsold: recentUnsold(cands, time.Now())}, nil
+}
+
+// recentUnsold picks the newest unsold listing in the window, unless the home
+// sold after it (then the sale is the better guide). cands is newest first.
+func recentUnsold(cands []candidate, now time.Time) *Unsold {
+	for _, c := range cands {
+		if c.source == "sold" {
+			return nil
+		}
+		if c.source != "unsold" {
+			continue
+		}
+		if now.Sub(c.at) > UnsoldWindow {
+			return nil
+		}
+		price, _ := c.rec["ListPrice"].(float64)
+		if price <= 0 {
+			continue
+		}
+		status, _ := c.rec["MlsStatus"].(string)
+		return &Unsold{ListPrice: price, Date: c.at.Format("2006-01-02"), Status: status}
+	}
+	return nil
 }
 
 // Homes serves lookups for the API.
