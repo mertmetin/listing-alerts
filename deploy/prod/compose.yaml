@@ -134,6 +134,20 @@ services:
     volumes: [./data/geo:/geo:ro]
     mem_limit: 256m
 
+  # Listings that ended unsold (expired, terminated, suspended), for the
+  # days-on-market research. Same code as sold-archive, SOURCE=offmarket.
+  offmarket-archive:
+    <<: *app
+    entrypoint: ["/poller"]
+    environment:
+      <<: *env
+      SOURCE: offmarket
+      PROPTX_VOW_TOKEN: ${PROPTX_VOW_TOKEN:?missing}
+      SOLD_SINCE: "2021-01-01"
+      ADDRESS_POINTS_DB: /geo/address-points.db
+    volumes: [./data/geo:/geo:ro]
+    mem_limit: 256m
+
   detector:
     <<: *app
     entrypoint: ["/detector"]

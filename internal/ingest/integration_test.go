@@ -140,3 +140,58 @@ func TestKafkaPublisherKeysByListing(t *testing.T) {
 		})
 	}
 }
+
+func TestListingHistory(t *testing.T) {
+	ctx := context.Background()
+	pool := pg(t)
+	s := PGStore{Pool: pool}
+	key := fmt.Sprintf("H%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		pool.Exec(ctx, `DELETE FROM source_listings WHERE source = 'vow' AND listing_key = $1`, key)
+		pool.Exec(ctx, `DELETE FROM listing_history WHERE listing_key = $1`, key)
+	})
+	put := func(at time.Time, status, mls string, price float64, hash string) {
+		t.Helper()
+		l := listing.Listing{Key: key, StandardStatus: status, MlsStatus: mls, ListPrice: &price, ModifiedAt: at}
+		if err := s.Commit(ctx, HistorySource, nil, []Snapshot{{Key: key, Version: Version{Hash: hash, ModifiedAt: at, Present: true}, Listing: &l}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t0 := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	put(t0, "Active", "New", 699000, "a")
+	put(t0.Add(24*time.Hour), "Active", "New", 699000, "b")          // photos changed: no history row
+	put(t0.Add(48*time.Hour), "Active", "Price Change", 679000, "c") // price drop
+	put(t0.Add(72*time.Hour), "Active Under Contract", "Sold Conditional", 679000, "d")
+	// Removal without a body never adds a row.
+	if err := s.Commit(ctx, HistorySource, nil, []Snapshot{{Key: key, Version: Version{Hash: "d", ModifiedAt: t0.Add(96 * time.Hour), Present: false}}}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pool.Query(ctx, `SELECT mls_status, list_price::int FROM listing_history WHERE listing_key = $1 ORDER BY at`, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for rows.Next() {
+		var m string
+		var p int
+		rows.Scan(&m, &p)
+		got = append(got, fmt.Sprintf("%s %d", m, p))
+	}
+	want := []string{"New 699000", "Price Change 679000", "Sold Conditional 679000"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("history = %v, want %v", got, want)
+	}
+	// Other sources (IDX) don't write history.
+	other := fmt.Sprintf("itest-%d", time.Now().UnixNano())
+	t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM source_listings WHERE source = $1`, other) })
+	p := 1.0
+	if err := s.Commit(ctx, other, nil, []Snapshot{{Key: key + "x", Version: Version{Hash: "z", ModifiedAt: t0, Present: true},
+		Listing: &listing.Listing{Key: key + "x", ListPrice: &p, ModifiedAt: t0}}}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	pool.QueryRow(ctx, `SELECT count(*) FROM listing_history WHERE listing_key = $1`, key+"x").Scan(&n)
+	if n != 0 {
+		t.Fatalf("non-VOW source wrote %d history rows", n)
+	}
+}

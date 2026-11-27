@@ -244,3 +244,42 @@ func TestNeighboursSameBuilding(t *testing.T) {
 		t.Fatalf("no unit: %+v", homes)
 	}
 }
+
+func TestOffMarketArchive(t *testing.T) {
+	ctx := context.Background()
+	pool := isolated(t)
+	rec := func(key, status, mls, mod string) map[string]any {
+		return map[string]any{"ListingKey": key, "ModificationTimestamp": mod, "StandardStatus": status, "MlsStatus": mls,
+			"TransactionType": "For Sale", "CountyOrParish": "Ottawa", "PropertySubType": "Detached", "ListPrice": 650000.0,
+			"OriginalListPrice": 699000.0, "ListingContractDate": "2026-05-01", "DaysOnMarket": 45.0, "ExpirationDate": "2026-08-31"}
+	}
+	a := &Archive{Kind: KindOffMarket, Pool: pool, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: time.Now, Feed: &pages{p: []reso.Page{
+		{Records: []map[string]any{rec("T1", "Cancelled", "Terminated", "2026-06-15T00:00:00Z"), rec("E1", "Expired", "Expired", "2026-09-01T00:00:00Z")},
+			Next: reso.Cursor{Phase: reso.Incremental, TS: time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)}},
+	}}}
+	if _, err := a.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	rows, err := pool.Query(ctx, `SELECT listing_key, mls_status || ' ' || off_market_date::text || ' ' || days_on_market || ' ' || original_list_price::int FROM offmarket_listings`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var k, v string
+		rows.Scan(&k, &v)
+		got[k] = v
+	}
+	if got["T1"] != "Terminated 2026-06-15 45 699000" || got["E1"] != "Expired 2026-08-31 45 699000" || len(got) != 2 {
+		t.Fatalf("offmarket rows = %v", got)
+	}
+	// Its own cursor: the sold archive's position is untouched.
+	var n int
+	pool.QueryRow(ctx, `SELECT count(*) FROM sold_state`).Scan(&n)
+	if n != 0 {
+		t.Fatal("offmarket archive wrote the sold cursor")
+	}
+	if c, err := a.Cursor(ctx); err != nil || c.Phase != reso.Incremental {
+		t.Fatalf("cursor %+v %v", c, err)
+	}
+}

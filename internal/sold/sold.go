@@ -1,5 +1,6 @@
-// Package sold keeps an archive of closed for-sale listings from the PropTx
-// VOW feed, for home-value research (the ottawa-home-value project).
+// Package sold keeps archives of for-sale listing outcomes from the PropTx
+// VOW feed, for research (the ottawa-home-value project): closed sales, and
+// (Kind offmarket) listings that expired, were terminated or suspended.
 //
 // The alert pipeline only needs each listing's current state, and its
 // baseline skipped closed history. The archive is separate: on first run it
@@ -32,7 +33,67 @@ var Fields = append(append([]string{}, hub.Fields...),
 	"ClosePrice", "CloseDate", "PurchaseContractDate", "Latitude", "Longitude",
 	// Valuation extras the public sites don't display.
 	"FoundationDetails", "HeatSource", "CoveredSpaces", "GarageYN", "ParkingFeatures", "KitchensTotal",
-	"RoomsAboveGrade", "DenFamilyroomYN", "CentralVacuumYN", "LotSizeArea", "LotSizeSource")
+	"RoomsAboveGrade", "DenFamilyroomYN", "CentralVacuumYN", "LotSizeArea", "LotSizeSource",
+	// Days-on-market research: how long it was listed and how the price moved.
+	"DaysOnMarket", "ExpirationDate", "PreviousListPrice", "PriceChangeTimestamp", "PriorMlsStatus")
+
+// Kind is which outcome an archive keeps.
+type Kind string
+
+const (
+	KindSold      Kind = "sold"      // sold_listings: closed sales
+	KindOffMarket Kind = "offmarket" // offmarket_listings: expired, terminated, suspended
+)
+
+// EndedUnsold limits the feed to for-sale listings that came off the market
+// without selling. PropTx: Cancelled = Terminated, Withdrawn = Suspended.
+const EndedUnsold = "TransactionType eq 'For Sale' and (StandardStatus eq 'Expired' or StandardStatus eq 'Cancelled' or StandardStatus eq 'Withdrawn')"
+
+// OffMarketScope is Scope for the off-market archive.
+func OffMarketScope(propertyScope, area string) string {
+	var parts []string
+	for _, p := range []string{propertyScope, EndedUnsold, area} {
+		if p = strings.TrimSpace(p); p != "" {
+			parts = append(parts, "("+p+")")
+		}
+	}
+	return strings.Join(parts, " and ")
+}
+
+// ListedSince is the off-market baseline filter: listings from day d on.
+func ListedSince(d time.Time) string { return "ListingContractDate ge " + d.Format("2006-01-02") }
+
+// OffMarketDate is when an unsold listing left the market: its expiry date
+// if it expired, else its list date plus PropTx's DaysOnMarket, else the day
+// of its last change.
+func OffMarketDate(r map[string]any, modified time.Time) *time.Time {
+	status, _ := r["StandardStatus"].(string)
+	if status == "Expired" {
+		if d := day(r["ExpirationDate"]); d != nil {
+			return d
+		}
+	}
+	if start, dom := day(r["ListingContractDate"]), intOf(r["DaysOnMarket"]); start != nil && dom != nil {
+		t := start.AddDate(0, 0, *dom)
+		return &t
+	}
+	if modified.IsZero() {
+		return nil
+	}
+	t := time.Date(modified.Year(), modified.Month(), modified.Day(), 0, 0, 0, 0, time.UTC)
+	return &t
+}
+
+func intOf(v any) *int {
+	switch n := v.(type) {
+	case float64:
+		i := int(n)
+		return &i
+	case int:
+		return &n
+	}
+	return nil
+}
 
 // ClosedForSale limits the feed to closed sales. Closed covers Sold and the
 // rare Deal Fell Through after closing; mls_status tells them apart.
@@ -63,8 +124,10 @@ type Feed interface {
 	Fetch(ctx context.Context, cur reso.Cursor, now time.Time) (reso.Page, error)
 }
 
-// Archive stores sold listings.
+// Archive stores sold listings (Kind sold, the default) or listings that
+// ended unsold (Kind offmarket).
 type Archive struct {
+	Kind     Kind
 	Pool     *pgxpool.Pool
 	Feed     Feed
 	Geo      Locator // optional
@@ -82,6 +145,25 @@ type Row struct {
 	Record                          map[string]any
 	Lat, Lng                        *float64
 	Precision                       string
+	// Off-market archive only.
+	StandardStatus               string
+	ListPrice, OriginalListPrice *float64
+	ListDate, OffMarketDate      *time.Time
+	DaysOnMarket                 *int
+}
+
+func (a *Archive) kind() Kind {
+	if a.Kind == "" {
+		return KindSold
+	}
+	return a.Kind
+}
+
+func (a *Archive) stateTable() string {
+	if a.kind() == KindOffMarket {
+		return "offmarket_state"
+	}
+	return "sold_state"
 }
 
 // Prepare turns raw records into rows, geocoding each one. Records without a
@@ -97,6 +179,12 @@ func (a *Archive) Prepare(rows []map[string]any) []Row {
 			Key: l.Key, County: l.County, MlsStatus: l.MlsStatus, SubType: strings.TrimSpace(l.PropertySubType),
 			ClosePrice: l.ClosePrice, CloseDate: day(r["CloseDate"]), ContractDate: day(r["PurchaseContractDate"]),
 			ModifiedAt: l.ModifiedAt, Record: r,
+		}
+		if a.kind() == KindOffMarket {
+			row.StandardStatus = l.StandardStatus
+			row.ListPrice, row.OriginalListPrice = l.ListPrice, l.OriginalListPrice
+			row.ListDate, row.OffMarketDate = day(r["ListingContractDate"]), OffMarketDate(r, l.ModifiedAt)
+			row.DaysOnMarket = intOf(r["DaysOnMarket"])
 		}
 		if l.Latitude != nil && l.Longitude != nil && *l.Latitude != 0 {
 			row.Lat, row.Lng, row.Precision = l.Latitude, l.Longitude, "feed"
@@ -126,6 +214,16 @@ func (a *Archive) Commit(ctx context.Context, rows []Row, cur reso.Cursor) (int,
 			if err != nil {
 				return err
 			}
+			if a.kind() == KindOffMarket {
+				tag, err := tx.Exec(ctx, offMarketSQL, r.Key, r.County, r.StandardStatus, r.MlsStatus, r.SubType,
+					r.ListPrice, r.OriginalListPrice, r.ListDate, r.OffMarketDate, r.DaysOnMarket, r.ModifiedAt, rec,
+					r.Lat, r.Lng, nullable(r.Precision))
+				if err != nil {
+					return fmt.Errorf("store %s: %w", r.Key, err)
+				}
+				changed += int(tag.RowsAffected())
+				continue
+			}
 			tag, err := tx.Exec(ctx, `
 				INSERT INTO sold_listings (listing_key, county, mls_status, property_sub_type, close_price, close_date,
 					contract_date, modified_at, record, lat, lng, geo_precision)
@@ -144,7 +242,7 @@ func (a *Archive) Commit(ctx context.Context, rows []Row, cur reso.Cursor) (int,
 			}
 			changed += int(tag.RowsAffected())
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO sold_state (k, v) VALUES ('cursor', $1)
+		_, err := tx.Exec(ctx, `INSERT INTO `+a.stateTable()+` (k, v) VALUES ('cursor', $1)
 			ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v`, string(c))
 		return err
 	})
@@ -154,7 +252,7 @@ func (a *Archive) Commit(ctx context.Context, rows []Row, cur reso.Cursor) (int,
 // Cursor loads the saved position (zero when none: start the baseline).
 func (a *Archive) Cursor(ctx context.Context) (reso.Cursor, error) {
 	var v string
-	err := a.Pool.QueryRow(ctx, `SELECT v FROM sold_state WHERE k = 'cursor'`).Scan(&v)
+	err := a.Pool.QueryRow(ctx, `SELECT v FROM `+a.stateTable()+` WHERE k = 'cursor'`).Scan(&v)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return reso.Cursor{}, nil
 	}
@@ -182,7 +280,7 @@ func (a *Archive) Step(ctx context.Context) (more bool, err error) {
 		return false, err
 	}
 	if len(page.Records) > 0 || page.Next.Phase != cur.Phase {
-		a.Log.Info("sold archive", "phase", cur.Phase, "read", len(page.Records), "stored", n,
+		a.Log.Info(string(a.kind())+" archive", "phase", cur.Phase, "read", len(page.Records), "stored", n,
 			"located", located(rows), "next_phase", page.Next.Phase)
 	}
 	return page.More, nil
@@ -199,7 +297,7 @@ func (a *Archive) Run(ctx context.Context) error {
 			if errors.As(err, &se) && se.Unauthorized() {
 				return err // a bad token will not fix itself
 			}
-			a.Log.Error("sold archive step failed", "err", err)
+			a.Log.Error(string(a.kind())+" archive step failed", "err", err)
 			wait = 30 * time.Second
 		case more:
 			continue
@@ -211,6 +309,19 @@ func (a *Archive) Run(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
+
+const offMarketSQL = `
+	INSERT INTO offmarket_listings (listing_key, county, standard_status, mls_status, property_sub_type, list_price,
+		original_list_price, list_date, off_market_date, days_on_market, modified_at, record, lat, lng, geo_precision)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+	ON CONFLICT (listing_key) DO UPDATE SET county = EXCLUDED.county, standard_status = EXCLUDED.standard_status,
+		mls_status = EXCLUDED.mls_status, property_sub_type = EXCLUDED.property_sub_type, list_price = EXCLUDED.list_price,
+		original_list_price = EXCLUDED.original_list_price, list_date = EXCLUDED.list_date,
+		off_market_date = EXCLUDED.off_market_date, days_on_market = EXCLUDED.days_on_market,
+		modified_at = EXCLUDED.modified_at, record = EXCLUDED.record,
+		lat = COALESCE(EXCLUDED.lat, offmarket_listings.lat), lng = COALESCE(EXCLUDED.lng, offmarket_listings.lng),
+		geo_precision = COALESCE(EXCLUDED.geo_precision, offmarket_listings.geo_precision), updated_at = now()
+	WHERE offmarket_listings.modified_at <= EXCLUDED.modified_at`
 
 func located(rows []Row) int {
 	n := 0

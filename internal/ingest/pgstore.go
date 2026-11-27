@@ -60,6 +60,25 @@ func collect(rows pgx.Rows, out map[string]Version) (map[string]Version, error) 
 	return out, rows.Err()
 }
 
+// HistorySource is the source whose status and price changes go to
+// listing_history: VOW, the only feed with the full lifecycle.
+const HistorySource = "vow"
+
+// historySQL records a row for each incoming listing whose status, MLS status
+// or list price differs from the stored version (or that is new). Removals
+// (no body) are skipped: the status change that caused them arrives as a body.
+const historySQL = `
+	INSERT INTO listing_history (source, listing_key, at, standard_status, mls_status, list_price)
+	SELECT $1, t.k, t.m, coalesce(t.b::jsonb->>'standard_status', ''), coalesce(t.b::jsonb->>'mls_status', ''),
+	       (t.b::jsonb->>'list_price')::numeric
+	FROM unnest($2::text[], $3::timestamptz[], $4::text[]) AS t(k, m, b)
+	LEFT JOIN source_listings s ON s.source = $1 AND s.listing_key = t.k
+	WHERE t.b IS NOT NULL AND (s.listing IS NULL
+	   OR s.listing->>'standard_status' IS DISTINCT FROM t.b::jsonb->>'standard_status'
+	   OR s.listing->>'mls_status' IS DISTINCT FROM t.b::jsonb->>'mls_status'
+	   OR (s.listing->>'list_price')::numeric IS DISTINCT FROM (t.b::jsonb->>'list_price')::numeric)
+	ON CONFLICT DO NOTHING`
+
 // Commit upserts snapshots and the cursor in one transaction. Removals keep
 // the last known listing body (listing = COALESCE(new, old)).
 func (s PGStore) Commit(ctx context.Context, source string, cur *reso.Cursor, snaps []Snapshot) error {
@@ -78,6 +97,12 @@ func (s PGStore) Commit(ctx context.Context, source string, cur *reso.Cursor, sn
 					}
 					str := string(b)
 					bodies[i] = &str
+				}
+			}
+			// History first: compare with the version stored before this write.
+			if source == HistorySource {
+				if _, err := tx.Exec(ctx, historySQL, source, keys, mods, bodies); err != nil {
+					return err
 				}
 			}
 			if _, err := tx.Exec(ctx, `

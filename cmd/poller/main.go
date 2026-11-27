@@ -5,6 +5,8 @@
 //	SOURCE=offmls  hotrentals.ca off-MLS rental files (OFFMLS_FILES)
 //	SOURCE=sold    sold archive from the VOW feed (PROPTX_VOW_TOKEN): every closed
 //	               sale in SOLD_AREA since SOLD_SINCE, then new sales; no events
+//	SOURCE=offmarket  the same for listings that ended unsold (expired, terminated,
+//	               suspended) listed since SOLD_SINCE; no events
 //
 // Run one replica per source: a source's cursor has a single writer. Scaling
 // happens downstream, where listing.changes partitions fan out to workers.
@@ -146,7 +148,7 @@ func run() error {
 		} else {
 			loop = p.Run
 		}
-	case "sold":
+	case "sold", "offmarket":
 		token := os.Getenv("PROPTX_VOW_TOKEN")
 		if token == "" {
 			return errors.New("PROPTX_VOW_TOKEN is not set")
@@ -159,12 +161,17 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("SOLD_SINCE: %w", err)
 		}
+		area := env("SOLD_AREA", "CountyOrParish eq 'Ottawa'")
+		scope, baseline, kind := sold.Scope(env("SCOPE_FILTER", defaultScope), area), sold.Since(since), sold.KindSold
+		if source == "offmarket" {
+			scope, baseline, kind = sold.OffMarketScope(env("SCOPE_FILTER", defaultScope), area), sold.ListedSince(since), sold.KindOffMarket
+		}
 		a := &sold.Archive{
-			Pool: deps.PG, Log: log, Now: time.Now, Interval: duration("POLL_INTERVAL", 15*time.Minute),
+			Kind: kind, Pool: deps.PG, Log: log, Now: time.Now, Interval: duration("POLL_INTERVAL", 15*time.Minute),
 			Feed: &reso.Source{
 				Client:         client,
-				Scope:          sold.Scope(env("SCOPE_FILTER", defaultScope), env("SOLD_AREA", "CountyOrParish eq 'Ottawa'")),
-				BaselineFilter: sold.Since(since),
+				Scope:          scope,
+				BaselineFilter: baseline,
 				Select:         sold.Fields,
 				PageSize:       intEnv("PAGE_SIZE", 500),
 				Overlap:        10 * time.Minute,
@@ -195,7 +202,7 @@ func run() error {
 		}
 		loop = p.Run
 	default:
-		return fmt.Errorf("SOURCE must be vow, idx, offmls or sold, got %q", source)
+		return fmt.Errorf("SOURCE must be vow, idx, offmls, sold or offmarket, got %q", source)
 	}
 
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: platform.OpsMux(checks, reg), ReadHeaderTimeout: 5 * time.Second}
